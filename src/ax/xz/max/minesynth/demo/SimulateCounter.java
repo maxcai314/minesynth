@@ -1,6 +1,7 @@
 package ax.xz.max.minesynth.demo;
 
 import ax.xz.max.minesynth.netlist.Netlist;
+import ax.xz.max.minesynth.rtlil.BitVector;
 import ax.xz.max.minesynth.rtlil.RtlilParser;
 import ax.xz.max.minesynth.sim.Simulator;
 
@@ -53,13 +54,13 @@ public final class SimulateCounter {
 		System.out.println();
 		System.out.println("cycle | en | plain | en_cnt | en_wide | neg | toggle");
 
-		sim.setInput("\\en", 1);
+		sim.setInput("\\en", BitVector.of(true));
 		for (int cycle = 0; cycle < 12; cycle++) {
 			printCountersEnRow(sim, cycle);
 			sim.stepClock("\\clk");
 		}
 		System.out.println("      (enable off; en_cnt and en_wide must freeze)");
-		sim.setInput("\\en", 0);
+		sim.setInput("\\en", BitVector.of(false));
 		for (int cycle = 12; cycle < 16; cycle++) {
 			printCountersEnRow(sim, cycle);
 			sim.stepClock("\\clk");
@@ -70,12 +71,12 @@ public final class SimulateCounter {
 	private static void printCountersEnRow(Simulator sim, int cycle) {
 		System.out.printf("%5d | %2d | %5d | %6d | %7d | %3d | %6d%n",
 			cycle,
-			sim.input("\\en"),
-			sim.output("\\plain_count"),
-			sim.output("\\en_count"),
-			sim.output("\\en_wide"),
-			sim.output("\\neg_count"),
-			sim.output("\\toggle"));
+			sim.input("\\en").toLong(),
+			sim.output("\\plain_count").toLong(),
+			sim.output("\\en_count").toLong(),
+			sim.output("\\en_wide").toLong(),
+			sim.output("\\neg_count").toLong(),
+			sim.output("\\toggle").toLong());
 	}
 
 	private static void counters(Simulator sim) {
@@ -84,10 +85,10 @@ public final class SimulateCounter {
 		System.out.println();
 		System.out.println("step                    | acount (adff)  | en_acount      | scount (sdff)  | en_scount");
 
-		sim.setInput("\\en", 1);
+		sim.setInput("\\en", BitVector.of(true));
 
 		// async reset takes effect with NO clock edge
-		sim.setInput("\\reset", 1);
+		sim.setInput("\\reset", BitVector.of(true));
 		sim.propagate();
 		printCountersRow(sim, "reset=1, no clock yet");
 
@@ -95,7 +96,7 @@ public final class SimulateCounter {
 		sim.stepClock("\\clk");
 		printCountersRow(sim, "reset=1, one clock");
 
-		sim.setInput("\\reset", 0);
+		sim.setInput("\\reset", BitVector.of(false));
 		sim.propagate();
 		for (int cycle = 0; cycle < 5; cycle++) {
 			sim.stepClock("\\clk");
@@ -103,7 +104,7 @@ public final class SimulateCounter {
 		}
 
 		// async reset again, mid-run, still without an edge
-		sim.setInput("\\reset", 1);
+		sim.setInput("\\reset", BitVector.of(true));
 		sim.propagate();
 		printCountersRow(sim, "reset=1 again, no clock");
 	}
@@ -111,9 +112,9 @@ public final class SimulateCounter {
 	private static void printCountersRow(Simulator sim, String label) {
 		System.out.printf("%-23s | %014x | %014x | %014x | %014x%n",
 			label,
-			sim.output("\\acount"),
-			sim.output("\\en_acount"),
-			sim.output("\\scount"),
-			sim.output("\\en_scount"));
+			sim.output("\\acount").toLong(),
+			sim.output("\\en_acount").toLong(),
+			sim.output("\\scount").toLong(),
+			sim.output("\\en_scount").toLong());
 	}
 }

@@ -1,6 +1,7 @@
 package ax.xz.max.minesynth.rtlil;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -60,12 +61,46 @@ public record BitVector(List<State> bits) {
 		return (int) raw;
 	}
 
+	/**
+	 * This vector as a boolean. Requires width 1 and a defined bit.
+	 *
+	 * @throws IllegalStateException if the width is not 1 or the bit is x/z
+	 */
+	public boolean toBoolean() {
+		if (width() != 1)
+			throw new IllegalStateException("vector is " + width() + " bits, not 1");
+		return bit(0).toBoolean();
+	}
+
 	/** Builds a vector of {@code width} bits from the low bits of {@code value}. */
 	public static BitVector of(long value, int width) {
 		List<State> bits = new ArrayList<>(width);
 		for (int i = 0; i < width; i++)
 			bits.add(State.of(((value >>> i) & 1) != 0));
 		return new BitVector(bits);
+	}
+
+	/** A single-bit vector: {@code 1'1} for true, {@code 1'0} for false. */
+	public static BitVector of(boolean bit) {
+		return new BitVector(List.of(State.of(bit)));
+	}
+
+	/** An all-zero vector of {@code width} bits. */
+	public static BitVector zeros(int width) {
+		return new BitVector(Collections.nCopies(width, State.S0));
+	}
+
+	/** An all-one vector of {@code width} bits. */
+	public static BitVector ones(int width) {
+		return new BitVector(Collections.nCopies(width, State.S1));
+	}
+
+	/** Builds a vector from defined bits, index 0 = LSB. */
+	public static BitVector fromBooleans(boolean... bits) {
+		List<State> states = new ArrayList<>(bits.length);
+		for (boolean bit : bits)
+			states.add(State.of(bit));
+		return new BitVector(states);
 	}
 
 	/**

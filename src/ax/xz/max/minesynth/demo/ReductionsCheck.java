@@ -1,6 +1,7 @@
 package ax.xz.max.minesynth.demo;
 
 import ax.xz.max.minesynth.netlist.Netlist;
+import ax.xz.max.minesynth.rtlil.BitVector;
 import ax.xz.max.minesynth.rtlil.RtlilParser;
 import ax.xz.max.minesynth.sim.Simulator;
 
@@ -43,7 +44,7 @@ public final class ReductionsCheck {
 				case 3 -> 1L << (W - 1);
 				default -> random.nextLong() & MASK;
 			};
-			simulator.setInput("\\i_in", input);
+			simulator.setInput("\\i_in", BitVector.of(input, W));
 			simulator.propagate();
 			failures += verify(simulator, input);
 		}
@@ -71,7 +72,7 @@ public final class ReductionsCheck {
 	}
 
 	private static int compare(Simulator simulator, long input, String port, boolean expected) {
-		boolean actual = simulator.output(port) != 0;
+		boolean actual = simulator.output(port).toBoolean();
 		if (actual == expected)
 			return 0;
 		System.out.printf("MISMATCH %s for input %05x: netlist says %d, golden model says %d%n",

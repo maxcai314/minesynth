@@ -29,6 +29,19 @@ public enum State {
 		return this == S0 || this == S1;
 	}
 
+	/**
+	 * True for {@link #S1}, false for {@link #S0}.
+	 *
+	 * @throws IllegalStateException for undefined states (x/z/m/-)
+	 */
+	public boolean toBoolean() {
+		return switch (this) {
+			case S0 -> false;
+			case S1 -> true;
+			default -> throw new IllegalStateException("state '" + text + "' is not 0 or 1");
+		};
+	}
+
 	/** Parses one constant digit, e.g. {@code '1'} or {@code 'x'}. */
 	public static State fromText(char c) {
 		return switch (c) {

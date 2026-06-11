@@ -25,7 +25,7 @@ import java.util.Map;
  * sequence on the clock port with propagation after each.
  */
 public final class Simulator {
-	private static final int MAX_SETTLE_ITERATIONS = 1000;
+	private static final int MAX_SETTLE_ITERATIONS = 1024;
 
 	private final Netlist netlist;
 	private final boolean[] netValues;
@@ -95,51 +95,53 @@ public final class Simulator {
 		propagate();
 	}
 
-	/** Sets an input port to the low bits of {@code value}. Takes effect on the next propagation. */
-	public void setInput(String portName, long value) {
+	/**
+	 * Sets an input port. The value must be exactly as wide as the port and
+	 * fully defined (no x/z bits). Takes effect on the next propagation.
+	 */
+	public void setInput(String portName, BitVector value) {
 		boolean[] bits = inputs.get(portName);
 		if (bits == null)
 			throw new IllegalArgumentException("no input port named " + portName);
+		if (value.width() != bits.length)
+			throw new IllegalArgumentException(portName + " is " + bits.length
+				+ " bits wide, but the supplied value " + value + " has " + value.width());
+		if (!value.isFullyDefined())
+			throw new IllegalArgumentException(portName + ": value " + value
+				+ " contains x/z bits; simulation is two-state");
 		for (int i = 0; i < bits.length; i++)
-			bits[i] = ((value >>> i) & 1) != 0;
+			bits[i] = value.bit(i).toBoolean();
 		dirty = true;
 	}
 
 	/** The value an input port is currently set to. */
-	public long input(String portName) {
+	public BitVector input(String portName) {
 		boolean[] bits = inputs.get(portName);
 		if (bits == null)
 			throw new IllegalArgumentException("no input port named " + portName);
-		long value = 0;
-		for (int i = 0; i < bits.length; i++)
-			if (bits[i])
-				value |= 1L << i;
-		return value;
+		return BitVector.fromBooleans(bits);
 	}
 
-	/** Drives {@code clockPort} low then high, propagating after each step. */
+	/** Drives {@code clockPort} low then high, propagating after each step. Convenience method for testing. */
 	public void stepClock(String clockPort) {
-		setInput(clockPort, 0);
+		setInput(clockPort, BitVector.of(false));
 		propagate();
-		setInput(clockPort, 1);
+		setInput(clockPort, BitVector.of(true));
 		propagate();
 	}
 
-	/** The current value of an output port (width at most 64). */
-	public long output(String portName) {
+	/** The current value of an output port, exactly as wide as the port. */
+	public BitVector output(String portName) {
 		if (dirty)
 			propagate();
 		Wire port = netlist.port(portName)
 			.orElseThrow(() -> new IllegalArgumentException("no port named " + portName));
-		if (port.width() > Long.SIZE)
-			throw new IllegalArgumentException(portName + " is wider than 64 bits");
-		long value = 0;
+		boolean[] bits = new boolean[port.width()];
 		for (int i = 0; i < port.width(); i++) {
 			var net = netlist.netAt(new Pin.PortPin(portName, i));
-			if (net.isPresent() && netValues[net.get().id()])
-				value |= 1L << i;
+			bits[i] = net.isPresent() && netValues[net.get().id()];
 		}
-		return value;
+		return BitVector.fromBooleans(bits);
 	}
 
 	/**

@@ -59,6 +59,19 @@ public final class RtlilParserSelfTest {
 		check(BitVector.fromTextDigits("11", 4).toLong() == 3, "short digits zero-fill the high bits");
 		check(BitVector.of(5, 4).equals(v), "of(long) matches text parse");
 		check(!BitVector.fromTextDigits("01xz", 4).isFullyDefined(), "x/z bits are not defined");
+
+		check(BitVector.of(true).toBoolean() && !BitVector.of(false).toBoolean(),
+			"single-bit factory round-trips through toBoolean");
+		check(BitVector.zeros(3).equals(BitVector.fromTextDigits("000", 3)), "zeros factory");
+		check(BitVector.ones(2).toLong() == 3, "ones factory");
+		check(BitVector.fromBooleans(true, false, true).toLong() == 5, "fromBooleans is LSB-first");
+		boolean threw = false;
+		try {
+			ax.xz.max.minesynth.rtlil.State.SX.toBoolean();
+		} catch (IllegalStateException e) {
+			threw = true;
+		}
+		check(threw, "undefined state has no boolean value");
 	}
 
 	private static void wireAndSliceChecks() throws RtlilParseException {
