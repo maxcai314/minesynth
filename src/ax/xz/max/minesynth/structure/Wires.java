@@ -36,4 +36,29 @@ public final class Wires {
 			.output(new StructurePin(new Cell(0, 0, 0), out))
 			.build();
 	}
+
+	/**
+	 * A 1x1x1-cell wire with a repeater at its entrance, refreshing the signal
+	 * to full strength (and adding one tick of delay). The repeater sits on
+	 * the input port block facing into the cell, reading the neighbor's port
+	 * dust directly behind it; dust then carries the signal through the center
+	 * to the output face, so bends work just like {@link #wire}. Unlike a
+	 * plain wire, this one is directional.
+	 */
+	public static Structure repeaterWire(Direction in, Direction out) {
+		if (in == out)
+			throw new IllegalArgumentException("repeater wire needs two different faces, got " + in + " twice");
+
+		BlockPos center = new BlockPos(1, 1, 1);
+		return new Structure.Builder(new Cell(1, 1, 1))
+			.placeBlock(center.offset(in).below(), StructureBlock.WOOL)
+			.placeBlock(center.offset(in), new StructureBlock.Repeater(in.opposite(), 1))
+			.placeBlock(center.below(), StructureBlock.WOOL)
+			.placeBlock(center, StructureBlock.REDSTONE_DUST)
+			.placeBlock(center.offset(out).below(), StructureBlock.WOOL)
+			.placeBlock(center.offset(out), StructureBlock.REDSTONE_DUST)
+			.input(new StructurePin(new Cell(0, 0, 0), in))
+			.output(new StructurePin(new Cell(0, 0, 0), out))
+			.build();
+	}
 }

@@ -287,6 +287,28 @@ public final class StructureSelfTest {
 		check(combos == 12, "all 12 wire combinations build");
 		expectThrow(() -> Wires.wire(NORTH, NORTH), "different faces", "degenerate wire rejected");
 
+		Structure repeaterWire = Wires.repeaterWire(SOUTH, NORTH);
+		check(repeaterWire.contained()
+			&& repeaterWire.blockAt(repeaterWire.inputs().getFirst().connectionBlock()).orElseThrow()
+				.equals(new StructureBlock.Repeater(NORTH, 1)),
+			"repeater wire has the repeater on its input port block, facing in");
+		check(repeaterWire.blockAt(new BlockPos(1, 1, 1)).orElseThrow()
+				.equals(new StructureBlock.RedstoneDust())
+			&& repeaterWire.blockAt(repeaterWire.outputs().getFirst().connectionBlock()).orElseThrow()
+				.equals(new StructureBlock.RedstoneDust()),
+			"repeater wire carries dust from center to output");
+		check(repeaterWire.rotatedTo(EAST).equals(Wires.repeaterWire(WEST, EAST)),
+			"repeater wire rotates like its plain counterpart");
+
+		Structure bentRepeater = Wires.repeaterWire(NORTH, EAST);
+		check(bentRepeater.contained()
+			&& bentRepeater.blockAt(new BlockPos(1, 1, 0)).orElseThrow()
+				.equals(new StructureBlock.Repeater(SOUTH, 1))
+			&& bentRepeater.blockAt(new BlockPos(2, 1, 1)).orElseThrow()
+				.equals(new StructureBlock.RedstoneDust()),
+			"bent repeater wire: entrance repeater, dust turns the corner");
+		expectThrow(() -> Wires.repeaterWire(NORTH, NORTH), "different faces", "degenerate repeater wire rejected");
+
 		Structure via = Vias.upward(3, NORTH, EAST);
 		check(via.size().equals(new Cell(1, 3, 1)) && !via.contained(), "upward via shape");
 		check(via.inputs().equals(List.of(new StructurePin(new Cell(0, 0, 0), NORTH)))
@@ -302,6 +324,45 @@ public final class StructureSelfTest {
 			&& down.outputs().equals(List.of(new StructurePin(new Cell(0, 0, 0), SOUTH))),
 			"downward via swaps the pin roles");
 		expectThrow(() -> Vias.upward(1, NORTH, SOUTH), "at least 2 cells", "flat via rejected");
+
+		check(repeaterCount(Vias.upward(2, Direction.NORTH, SOUTH)) == 0,
+			"short via needs no internal refresh");
+		Structure tallUp = Vias.upward(5, NORTH, SOUTH);
+		check(repeaterCount(tallUp) > 0, "tall via refreshes itself with repeaters");
+
+		Structure tallDown = Vias.downward(5, SOUTH, NORTH); // same staircase, signal flowing down
+		boolean facingsFlip = true;
+		for (var entry : tallUp.blocks().entrySet()) {
+			StructureBlock downBlock = tallDown.blockAt(entry.getKey()).orElse(null);
+			if (entry.getValue() instanceof StructureBlock.Repeater(Direction facing, int delay)) {
+				if (!new StructureBlock.Repeater(facing.opposite(), delay).equals(downBlock))
+					facingsFlip = false;
+			} else if (!entry.getValue().equals(downBlock)) {
+				facingsFlip = false;
+			}
+		}
+		check(facingsFlip && tallUp.blocks().size() == tallDown.blocks().size(),
+			"downward via is the same staircase with repeaters facing down-signal");
+
+		int built = 0;
+		for (int height = 2; height <= 6; height++) {
+			for (Direction in : Direction.values()) {
+				for (Direction out : Direction.values()) {
+					Structure upVia = Vias.upward(height, in, out);
+					Structure downVia = Vias.downward(height, in, out);
+					if (!viaPortsAreDust(upVia) || !signalConnects(upVia)) {
+						check(false, "via sweep: upward " + height + " " + in + " to " + out);
+						return;
+					}
+					if (!viaPortsAreDust(downVia) || !signalConnects(downVia)) {
+						check(false, "via sweep: downward " + height + " " + in + " to " + out);
+						return;
+					}
+					built += 2;
+				}
+			}
+		}
+		check(built == 160, "via sweep: heights 2..6, all face pairs, both ways, all conduct");
 
 		check(Gates.andGate().inputs().equals(List.of(
 				new StructurePin(new Cell(0, 0, 0), SOUTH),
@@ -329,6 +390,68 @@ public final class StructureSelfTest {
 	}
 
 	// ---- helpers ----
+
+	private static int repeaterCount(Structure structure) {
+		return (int) structure.blocks().values().stream()
+			.filter(block -> block instanceof StructureBlock.Repeater)
+			.count();
+	}
+
+	private static boolean viaPortsAreDust(Structure via) {
+		return !via.contained()
+			&& via.blockAt(via.inputs().getFirst().connectionBlock()).orElseThrow()
+				.equals(new StructureBlock.RedstoneDust())
+			&& via.blockAt(via.outputs().getFirst().connectionBlock()).orElseThrow()
+				.equals(new StructureBlock.RedstoneDust());
+	}
+
+	/**
+	 * Follows the signal from input port to output port through dust and
+	 * repeaters using the in-game rules: dust connects at its own level and
+	 * diagonally one block up or down, an opaque block directly above the
+	 * lower dust cuts a diagonal, dust on glass does not transmit downward,
+	 * and repeaters pass only from their back to their front.
+	 */
+	private static boolean signalConnects(Structure via) {
+		var blocks = via.blocks();
+		BlockPos start = via.inputs().getFirst().connectionBlock();
+		BlockPos goal = via.outputs().getFirst().connectionBlock();
+		var visited = new java.util.HashSet<BlockPos>();
+		var queue = new java.util.ArrayDeque<BlockPos>();
+		visited.add(start);
+		queue.add(start);
+		while (!queue.isEmpty()) {
+			BlockPos at = queue.poll();
+			if (at.equals(goal))
+				return true;
+			if (blocks.get(at) instanceof StructureBlock.Repeater(Direction facing, int delay)) {
+				BlockPos front = at.offset(facing);
+				if (blocks.get(front) instanceof StructureBlock.RedstoneDust && visited.add(front))
+					queue.add(front);
+				continue;
+			}
+			for (Direction direction : Direction.values()) {
+				BlockPos level = at.offset(direction);
+				if (blocks.get(level) instanceof StructureBlock.RedstoneDust && visited.add(level))
+					queue.add(level);
+				if (blocks.get(level) instanceof StructureBlock.Repeater(Direction facing, int delay)
+						&& facing == direction && visited.add(level))
+					queue.add(level);
+
+				BlockPos up = level.above();
+				boolean upCut = blocks.get(at.above()) instanceof StructureBlock.Wool;
+				if (!upCut && blocks.get(up) instanceof StructureBlock.RedstoneDust && visited.add(up))
+					queue.add(up);
+
+				BlockPos down = level.below();
+				boolean downCut = blocks.get(level) instanceof StructureBlock.Wool
+					|| blocks.get(at.below()) instanceof StructureBlock.Glass;
+				if (!downCut && blocks.get(down) instanceof StructureBlock.RedstoneDust && visited.add(down))
+					queue.add(down);
+			}
+		}
+		return false;
+	}
 
 	private static void expectThrow(Runnable action, String messagePart, String label) {
 		checks++;

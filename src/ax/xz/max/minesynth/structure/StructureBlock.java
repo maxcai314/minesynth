@@ -26,7 +26,12 @@ public sealed interface StructureBlock permits
 	/** The opaque solid building block of the ecosystem. */
 	record Wool(BlockColor color) implements StructureBlock {}
 
-	/** Transparent support: dust on glass can climb diagonally (used by vias). */
+	/**
+	 * Transparent support. Caution: dust on glass passes redstone upward but
+	 * NOT downward (a Minecraft mechanic), so glass is unsuitable for paths
+	 * that descend; vias use wool. The asymmetry could serve deliberate
+	 * one-way designs later.
+	 */
 	record Glass(BlockColor color) implements StructureBlock {}
 
 	/** Redstone dust. */
