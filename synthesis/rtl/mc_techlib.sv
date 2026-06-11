@@ -42,6 +42,37 @@ module \$dff (CLK, D, Q);
 	endgenerate
 endmodule
 
+module \$dffe (CLK, EN, D, Q);
+	parameter WIDTH = 1;
+	parameter CLK_POLARITY = 1'b1;
+	parameter EN_POLARITY = 1'b1;
+
+	input wire CLK, EN;
+	(* force_downto *)
+	input wire [WIDTH-1:0] D;
+	(* force_downto *)
+	output wire [WIDTH-1:0] Q;
+
+	wire _en;
+
+	generate
+		if (EN_POLARITY) begin
+			assign _en = EN;
+		end else begin
+			assign _en = ~EN;
+		end
+	endgenerate
+
+	\$dff #(
+		.WIDTH(WIDTH),
+		.CLK_POLARITY(CLK_POLARITY)
+	) dff (
+		.CLK(CLK),
+		.D(_en ? D : Q),
+		.Q(Q)
+	);
+endmodule
+
 module \$adff (CLK, ARST, D, Q);
 	parameter WIDTH = 1;
 	parameter CLK_POLARITY = 1'b1;
@@ -66,6 +97,9 @@ module \$adff (CLK, ARST, D, Q);
 
 	wire _clk, _arst;
 
+	// explicit range so each chunk can slice its own piece of the reset value
+	localparam [WIDTH-1:0] ARST_VALUE_RANGED = ARST_VALUE;
+
 	genvar i;
 	generate
 		if (CLK_POLARITY) begin
@@ -82,7 +116,7 @@ module \$adff (CLK, ARST, D, Q);
 		for (i = 0; i <= WIDTH/31; i++) begin
 			MC_ADFF31 #(
 				.WIDTH(min(WIDTH - (31 * i), 31)),
-				.ARST_VALUE(ARST_VALUE)
+				.ARST_VALUE(ARST_VALUE_RANGED[31 * i +: min(WIDTH - (31 * i), 31)])
 			) dff (
 				.CLK(_clk),
 				.ARST(_arst),

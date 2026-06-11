@@ -1,10 +1,11 @@
 # the following lines are prepended by build.sh:
 # read_verilog -sv $*
+# read_verilog -lib rtl/mc_simlib.sv
 # hierarchy -check -top $TOP
 
 # boilerplate analysis & elaboration
-read_verilog -lib rtl/mc_simlib.sv
-proc; opt; fsm; opt; memory; opt
+# flatten: the backend wants a single flat module; MC_* blackboxes survive
+proc; flatten; opt; fsm; opt; memory; opt
 
 # techmap to coarse-grained MC_* primitives
 techmap -map rtl/mc_techlib.sv
@@ -26,3 +27,10 @@ techmap; opt
 json -o build/techmap.json
 write_rtlil build/techmap.rtlil
 show -width -colors 1 -format svg -prefix show/techmap
+
+# validation: fail loudly instead of emitting an unbuildable netlist.
+# runs after the artifacts are written so failed builds stay debuggable.
+check -assert
+# only whitelisted cell types may remain (anything else, e.g. a leaked
+# $_DLATCH_P_ from always_latch, has no Minecraft implementation)
+select -assert-none t:* t:MC_DFF31 %d t:MC_ADFF31 %d t:MC_UAND16 %d t:MC_UOR16 %d t:MC_UNOR16 %d t:MC_UXOR2 %d t:MC_UXOR4 %d t:MC_UXOR8 %d t:MC_UXOR16 %d t:$_AND_ %d t:$_OR_ %d t:$_XOR_ %d t:$_NOT_ %d t:$_MUX_ %d
