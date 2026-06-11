@@ -51,7 +51,7 @@ public record Structure(
 
 	/**
 	 * This structure rotated so its local north points at {@code orientation}
-	 * (about the +y axis; NORTH returns this structure). Blocks, pins, and
+	 * (about the +y-axis; NORTH returns this structure). Blocks, pins, and
 	 * directional block states all rotate together; the result is re-validated
 	 * by construction.
 	 */
@@ -284,9 +284,25 @@ public record Structure(
 		}
 
 		/**
+		 * Declares several inputs at once, in order. Pairs with
+		 * {@link PlacedStructure#inputPins()} to re-export a placed
+		 * component's ports as this structure's own.
+		 */
+		public Builder addInputs(List<StructurePin> pins) {
+			inputs.addAll(pins);
+			return this;
+		}
+
+		/** Declares several outputs at once, in order; see {@link #addInputs}. */
+		public Builder addOutputs(List<StructurePin> pins) {
+			outputs.addAll(pins);
+			return this;
+		}
+
+		/**
 		 * Declares whether the built structure is safely contained (the
 		 * default). Mark false for designs that use their outer shell, like
-		 * vias; the claim is verified at {@link #build()}.
+		 * via structures; the claim is verified at {@link #build()}.
 		 */
 		public Builder contained(boolean contained) {
 			this.contained = contained;

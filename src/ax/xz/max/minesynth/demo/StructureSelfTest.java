@@ -232,7 +232,7 @@ public final class StructureSelfTest {
 			.place(via, new Cell(0, 0, 0), NORTH, BlockColor.UNASSIGNED)
 			.place(via, new Cell(2, 0, 0), NORTH, BlockColor.UNASSIGNED)
 			.place(Wires.wire(NORTH, SOUTH), new Cell(1, 0, 0), NORTH, BlockColor.UNASSIGNED);
-		check(spaced.build().blocks().size() > 0, "gap or contained neighbor between vias is fine");
+		check(!spaced.build().blocks().isEmpty(), "gap or contained neighbor between vias is fine");
 
 		// color cascade: component stays UNASSIGNED in the sub-assembly, gets its
 		// final color when the sub-assembly is placed with one. The sub-board
@@ -251,6 +251,18 @@ public final class StructureSelfTest {
 			.build();
 		check(parent.blockAt(new BlockPos(1, 0, 0)).orElseThrow()
 			.equals(new StructureBlock.Wool(BlockColor.CYAN)), "color cascades down the hierarchy");
+
+		// the pin re-export idiom: a placed component's pins become the assembly's own
+		PlacedStructure placedWire = new PlacedStructure(
+			Wires.wire(NORTH, SOUTH), new Cell(1, 0, 0), NORTH, BlockColor.UNASSIGNED);
+		Structure reexport = new Structure.Builder(new Cell(2, 1, 1))
+			.place(placedWire)
+			.addInputs(placedWire.inputPins())
+			.addOutputs(placedWire.outputPins())
+			.build();
+		check(reexport.inputs().equals(placedWire.inputPins())
+			&& reexport.outputs().equals(placedWire.outputPins()),
+			"addInputs/addOutputs re-export placed pins");
 	}
 
 	private static void factoryChecks() {
@@ -262,9 +274,9 @@ public final class StructureSelfTest {
 				Structure wire = Wires.wire(in, out);
 				combos++;
 				boolean portsAreDust =
-					wire.blockAt(wire.inputs().get(0).connectionBlock()).orElseThrow()
+					wire.blockAt(wire.inputs().getFirst().connectionBlock()).orElseThrow()
 						.equals(new StructureBlock.RedstoneDust())
-					&& wire.blockAt(wire.outputs().get(0).connectionBlock()).orElseThrow()
+					&& wire.blockAt(wire.outputs().getFirst().connectionBlock()).orElseThrow()
 						.equals(new StructureBlock.RedstoneDust());
 				if (!wire.contained() || !portsAreDust) {
 					check(false, "wire " + in + " to " + out + " is contained with dust ports");
@@ -280,9 +292,9 @@ public final class StructureSelfTest {
 		check(via.inputs().equals(List.of(new StructurePin(new Cell(0, 0, 0), NORTH)))
 			&& via.outputs().equals(List.of(new StructurePin(new Cell(0, 2, 0), EAST))),
 			"upward via pins at bottom and top");
-		check(via.blockAt(via.inputs().get(0).connectionBlock()).orElseThrow()
+		check(via.blockAt(via.inputs().getFirst().connectionBlock()).orElseThrow()
 				.equals(new StructureBlock.RedstoneDust())
-			&& via.blockAt(via.outputs().get(0).connectionBlock()).orElseThrow()
+			&& via.blockAt(via.outputs().getFirst().connectionBlock()).orElseThrow()
 				.equals(new StructureBlock.RedstoneDust()),
 			"via ports are dust");
 		Structure down = Vias.downward(3, EAST, SOUTH);

@@ -157,9 +157,7 @@ public final class BuildGuide {
 	}
 
 	private static char glyph(Optional<StructureBlock> block) {
-		if (block.isEmpty())
-			return '.';
-		return switch (block.get()) {
+		return block.map(structureBlock -> switch (structureBlock) {
 			case StructureBlock.Wool w -> 'W';
 			case StructureBlock.Glass g -> 'G';
 			case StructureBlock.RedstoneDust d -> 'd';
@@ -170,14 +168,14 @@ public final class BuildGuide {
 				case WEST -> '<';
 			};
 			case StructureBlock.RedstoneTorch torch -> torch.wallAttachment()
-				.map(direction -> switch (direction) {
-					case NORTH -> 'n';
-					case EAST -> 'e';
-					case SOUTH -> 's';
-					case WEST -> 'w';
-				})
-				.orElse('t');
-		};
+					.map(direction -> switch (direction) {
+						case NORTH -> 'n';
+						case EAST -> 'e';
+						case SOUTH -> 's';
+						case WEST -> 'w';
+					})
+					.orElse('t');
+		}).orElse('.');
 	}
 
 	private static String name(StructureBlock block) {
