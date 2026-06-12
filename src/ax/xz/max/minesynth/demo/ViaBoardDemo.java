@@ -1,5 +1,6 @@
 package ax.xz.max.minesynth.demo;
 
+import ax.xz.max.minesynth.schematic.SchematicWriter;
 import ax.xz.max.minesynth.structure.BlockColor;
 import ax.xz.max.minesynth.structure.BlockPos;
 import ax.xz.max.minesynth.structure.BuildGuide;
@@ -11,6 +12,7 @@ import ax.xz.max.minesynth.structure.StructurePin;
 import ax.xz.max.minesynth.structure.Vias;
 import ax.xz.max.minesynth.structure.Wires;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -30,35 +32,47 @@ import java.util.Locale;
  * Toggling any one lever must change only that line's output.
  */
 public final class ViaBoardDemo {
-	public static void main(String[] args) {
+	public static void main(String[] args) throws Exception {
 		List<PlacedStructure> lineA = new ArrayList<>();
 		for (int x = 0; x < 3; x++)
 			lineA.add(new PlacedStructure(Wires.wire(Direction.WEST, Direction.EAST),
 				new Cell(x, 0, 1), Direction.NORTH, BlockColor.LIME));
 
-		PlacedStructure upB = new PlacedStructure(Vias.upward(2, Direction.SOUTH, Direction.NORTH),
+		int layerB = 2;
+		int layerC = 3;
+
+		if (args.length >= 2) {
+			layerB = Integer.parseInt(args[0]);
+			layerC = Integer.parseInt(args[1]);
+		}
+
+		if (layerB <= 0 || layerC <= 0) {
+			throw new IllegalArgumentException("Layer levels must be positive");
+		}
+
+		PlacedStructure upB = new PlacedStructure(Vias.upward(layerB + 1, Direction.SOUTH, Direction.NORTH),
 			new Cell(0, 0, 2), Direction.NORTH, BlockColor.CYAN);
 		PlacedStructure westB = new PlacedStructure(Wires.wire(Direction.SOUTH, Direction.EAST),
-			new Cell(0, 1, 1), Direction.NORTH, BlockColor.CYAN);
+			new Cell(0, layerB, 1), Direction.NORTH, BlockColor.CYAN);
 		PlacedStructure midB = new PlacedStructure(Wires.repeaterWire(Direction.WEST, Direction.EAST),
-			new Cell(1, 1, 1), Direction.NORTH, BlockColor.CYAN);
+			new Cell(1, layerB, 1), Direction.NORTH, BlockColor.CYAN);
 		PlacedStructure eastB = new PlacedStructure(Wires.wire(Direction.WEST, Direction.NORTH),
-			new Cell(2, 1, 1), Direction.NORTH, BlockColor.CYAN);
-		PlacedStructure downB = new PlacedStructure(Vias.downward(2, Direction.SOUTH, Direction.NORTH),
+			new Cell(2, layerB, 1), Direction.NORTH, BlockColor.CYAN);
+		PlacedStructure downB = new PlacedStructure(Vias.downward(layerB + 1, Direction.SOUTH, Direction.NORTH),
 			new Cell(2, 0, 0), Direction.NORTH, BlockColor.CYAN);
 
-		PlacedStructure upC = new PlacedStructure(Vias.upward(3, Direction.NORTH, Direction.SOUTH),
+		PlacedStructure upC = new PlacedStructure(Vias.upward(layerC + 1, Direction.NORTH, Direction.SOUTH),
 			new Cell(0, 0, 0), Direction.NORTH, BlockColor.ORANGE);
 		PlacedStructure westC = new PlacedStructure(Wires.wire(Direction.NORTH, Direction.EAST),
-			new Cell(0, 2, 1), Direction.NORTH, BlockColor.ORANGE);
+			new Cell(0, layerC, 1), Direction.NORTH, BlockColor.ORANGE);
 		PlacedStructure midC = new PlacedStructure(Wires.repeaterWire(Direction.WEST, Direction.EAST),
-			new Cell(1, 2, 1), Direction.NORTH, BlockColor.ORANGE);
+			new Cell(1, layerC, 1), Direction.NORTH, BlockColor.ORANGE);
 		PlacedStructure eastC = new PlacedStructure(Wires.wire(Direction.WEST, Direction.SOUTH),
-			new Cell(2, 2, 1), Direction.NORTH, BlockColor.ORANGE);
-		PlacedStructure downC = new PlacedStructure(Vias.downward(3, Direction.NORTH, Direction.SOUTH),
+			new Cell(2, layerC, 1), Direction.NORTH, BlockColor.ORANGE);
+		PlacedStructure downC = new PlacedStructure(Vias.downward(layerC + 1, Direction.NORTH, Direction.SOUTH),
 			new Cell(2, 0, 2), Direction.NORTH, BlockColor.ORANGE);
 
-		Structure.Builder builder = new Structure.Builder(new Cell(3, 3, 3)).contained(false);
+		Structure.Builder builder = new Structure.Builder(new Cell(3, Math.max(layerB, layerC) + 1, 3)).contained(false);
 		lineA.forEach(builder::place);
 		builder.place(upB).place(westB).place(midB).place(eastB).place(downB)
 			.place(upC).place(westC).place(midC).place(eastC).place(downC)
@@ -90,6 +104,11 @@ public final class ViaBoardDemo {
 		System.out.println("expected behavior:");
 		System.out.println("  each lever drives only its own lamp, through two corners and");
 		System.out.println("  (for B and C) a climb and a descent; no line may affect another");
+
+		Path schematicFile = Path.of("out", "via-board.schematic");
+		SchematicWriter.write(board, schematicFile);
+		System.out.println();
+		System.out.println("wrote " + schematicFile + " (worldedit: //schem load via-board, then //paste)");
 	}
 
 	private static String hookup(StructurePin pin) {

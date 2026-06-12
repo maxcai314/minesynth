@@ -1,5 +1,6 @@
 package ax.xz.max.minesynth.demo;
 
+import ax.xz.max.minesynth.schematic.SchematicWriter;
 import ax.xz.max.minesynth.structure.BlockColor;
 import ax.xz.max.minesynth.structure.BlockPos;
 import ax.xz.max.minesynth.structure.BuildGuide;
@@ -11,6 +12,7 @@ import ax.xz.max.minesynth.structure.Structure;
 import ax.xz.max.minesynth.structure.StructurePin;
 import ax.xz.max.minesynth.structure.Wires;
 
+import java.nio.file.Path;
 import java.util.Locale;
 
 /**
@@ -24,7 +26,7 @@ import java.util.Locale;
  * north edge.
  */
 public final class GateBoardDemo {
-	public static void main(String[] args) {
+	public static void main(String[] args) throws Exception {
 		PlacedStructure wireB = new PlacedStructure(Wires.wire(Direction.SOUTH, Direction.NORTH),
 			new Cell(0, 0, 2), Direction.NORTH, BlockColor.CYAN);
 		PlacedStructure wireA = new PlacedStructure(Wires.wire(Direction.EAST, Direction.NORTH),
@@ -68,6 +70,11 @@ public final class GateBoardDemo {
 		System.out.println("  0 1 |  1");
 		System.out.println("  1 0 |  1");
 		System.out.println("  1 1 |  0");
+
+		Path schematicFile = Path.of("out", "gate-board.schematic");
+		SchematicWriter.write(board, schematicFile);
+		System.out.println();
+		System.out.println("wrote " + schematicFile + " (worldedit: //schem load gate-board, then //paste)");
 	}
 
 	private static String hookup(StructurePin pin) {

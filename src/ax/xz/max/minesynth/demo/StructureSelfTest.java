@@ -1,5 +1,6 @@
 package ax.xz.max.minesynth.demo;
 
+import ax.xz.max.minesynth.schematic.SchematicWriter;
 import ax.xz.max.minesynth.structure.BlockColor;
 import ax.xz.max.minesynth.structure.BlockPos;
 import ax.xz.max.minesynth.structure.BuildGuide;
@@ -42,6 +43,7 @@ public final class StructureSelfTest {
 			compositionChecks();
 			factoryChecks();
 			buildGuideChecks();
+			schematicChecks();
 		} catch (Exception e) {
 			failures++;
 			System.out.println("FAIL unexpected exception: " + e);
@@ -387,6 +389,30 @@ public final class StructureSelfTest {
 		check(compass.contains("N (-z)") && compass.contains("E (+x)")
 			&& compass.indexOf("N (-z)") < compass.indexOf("S (+z)"),
 			"compass diagram shows the grid orientation");
+	}
+
+	private static void schematicChecks() throws Exception {
+		check(BlockColor.WHITE.ordinal() == 0 && BlockColor.LIME.ordinal() == 5
+			&& BlockColor.RED.ordinal() == 14 && BlockColor.BLACK.ordinal() == 15,
+			"BlockColor order matches the legacy dye palette");
+
+		java.nio.file.Path file = java.nio.file.Path.of("out", "selftest.schematic");
+		SchematicWriter.write(Wires.repeaterWire(SOUTH, NORTH).recolored(BlockColor.LIME), file);
+		byte[] raw = java.nio.file.Files.readAllBytes(file);
+		check(raw.length > 2 && (raw[0] & 0xFF) == 0x1F && (raw[1] & 0xFF) == 0x8B,
+			"schematic file is gzip compressed");
+
+		byte[] nbt;
+		try (var in = new java.util.zip.GZIPInputStream(new java.io.ByteArrayInputStream(raw))) {
+			nbt = in.readAllBytes();
+		}
+		String payload = new String(nbt, java.nio.charset.StandardCharsets.ISO_8859_1);
+		check(nbt[0] == 0x0A && payload.startsWith("Schematic", 3),
+			"root compound is named Schematic");
+		check(payload.contains("Width") && payload.contains("Height") && payload.contains("Length")
+			&& payload.contains("Materials") && payload.contains("Alpha")
+			&& payload.contains("Blocks") && payload.contains("Data"),
+			"schematic carries the six required tags");
 	}
 
 	// ---- helpers ----
