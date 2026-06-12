@@ -42,6 +42,9 @@ public final class StructureSelfTest {
 			placedStructureChecks();
 			compositionChecks();
 			factoryChecks();
+			signalStatsChecks();
+			junctionChecks();
+			junctionViaChecks();
 			buildGuideChecks();
 			schematicChecks();
 		} catch (Exception e) {
@@ -391,6 +394,111 @@ public final class StructureSelfTest {
 			"compass diagram shows the grid orientation");
 	}
 
+	private static void signalStatsChecks() {
+		check(Wires.wire(NORTH, SOUTH).signal().equals(new ax.xz.max.minesynth.structure.SignalStats(3, -3, 0)),
+			"plain wire stats are exact (3, -3, 0)");
+		check(Wires.repeaterWire(SOUTH, NORTH).signal()
+				.equals(new ax.xz.max.minesynth.structure.SignalStats(1, 12, 1)),
+			"repeater wire stats (1, 12, 1)");
+		check(Gates.notGate().inputSignal() == 2 && Gates.notGate().outputSignal() == 14
+			&& Gates.notGate().delayTicks() == 1, "NOT gate stats (2, 14, 1)");
+		check(Gates.andGate().outputSignal() == 13 && Gates.andGate().delayTicks() == 2,
+			"AND gate stats (13 out, 2 ticks)");
+		check(Gates.orGate().outputSignal() == 11 && Gates.orGate().delayTicks() == 1,
+			"OR gate stats (11 out, 1 tick)");
+
+		Structure wire = Wires.wire(NORTH, EAST);
+		check(wire.rotatedTo(EAST).signal().equals(wire.signal())
+			&& wire.recolored(BlockColor.LIME).signal().equals(wire.signal()),
+			"rotation and recoloring preserve stats");
+		check(new Structure.Builder(new Cell(1, 1, 1)).placeBlock(1, 0, 1, WOOL).build().signal()
+				.equals(ax.xz.max.minesynth.structure.SignalStats.WIRE_LIKE),
+			"builder default stats are wire-like");
+		expectThrow(() -> new ax.xz.max.minesynth.structure.SignalStats(1, 0, 0),
+			"outputSignal", "zero output signal rejected");
+		expectThrow(() -> new ax.xz.max.minesynth.structure.SignalStats(16, -3, 0),
+			"inputSignal", "out-of-range input signal rejected");
+
+		Structure pure = Vias.upward(2, NORTH, SOUTH);
+		check(pure.outputSignal() < 0 && pure.inputSignal() == -pure.outputSignal() + 1
+			&& pure.delayTicks() == 0, "pure via stats: input covers the dust run plus outward delivery");
+		Structure tall = Vias.upward(5, NORTH, SOUTH);
+		check(tall.delayTicks() == repeaterCount(tall) && tall.outputSignal() > 0,
+			"tall via tallies repeater delay and emits an absolute output");
+	}
+
+	private static void junctionChecks() {
+		Structure fork = Wires.simpleJunction(NORTH, EAST, SOUTH);
+		check(fork.contained() && fork.inputs().size() == 1 && fork.outputs().size() == 2,
+			"3-way junction shape");
+		check(fork.blockAt(new StructurePin(new Cell(0, 0, 0), EAST).connectionBlock()).orElseThrow()
+				.equals(new StructureBlock.RedstoneDust())
+			&& fork.blockAt(new StructurePin(new Cell(0, 0, 0), SOUTH).connectionBlock()).orElseThrow()
+				.equals(new StructureBlock.RedstoneDust()),
+			"junction outputs carry dust");
+		check(Wires.simpleJunction(NORTH, EAST, SOUTH, WEST).outputs().size() == 3, "4-way cross builds");
+		check(Wires.wire(NORTH, EAST).equals(Wires.simpleJunction(NORTH, EAST)),
+			"wire is the one-output junction");
+
+		Structure repeaterFork = Wires.repeaterSimpleJunction(NORTH, EAST, WEST);
+		check(repeaterFork.contained()
+			&& repeaterFork.blockAt(repeaterFork.inputs().getFirst().connectionBlock()).orElseThrow()
+				.equals(new StructureBlock.Repeater(SOUTH, 1)),
+			"repeater junction has the entrance repeater");
+		check(repeaterFork.signal().equals(new ax.xz.max.minesynth.structure.SignalStats(1, 12, 1)),
+			"repeater junction stats");
+		expectThrow(() -> Wires.simpleJunction(NORTH, EAST, EAST), "duplicate", "duplicate junction output rejected");
+		expectThrow(() -> Wires.simpleJunction(NORTH), "1 to 3", "junction without outputs rejected");
+	}
+
+	private static void junctionViaChecks() {
+		Structure up = Vias.upwardJunction(NORTH,
+			List.of(new ax.xz.max.minesynth.structure.ViaTap(1, EAST),
+				new ax.xz.max.minesynth.structure.ViaTap(3, WEST)));
+		check(up.size().equals(new Cell(1, 4, 1)) && !up.contained(), "upward junction via shape");
+		check(up.inputs().equals(List.of(new StructurePin(new Cell(0, 0, 0), NORTH)))
+			&& up.outputs().equals(List.of(
+				new StructurePin(new Cell(0, 1, 0), EAST),
+				new StructurePin(new Cell(0, 3, 0), WEST))),
+			"upward junction via pins");
+		check(signalConnects(up, up.inputs().getFirst(), up.outputs().get(0))
+			&& signalConnects(up, up.inputs().getFirst(), up.outputs().get(1)),
+			"upward junction via conducts to every tap");
+
+		Structure down = Vias.downwardJunction(3, SOUTH,
+			List.of(new ax.xz.max.minesynth.structure.ViaTap(0, NORTH),
+				new ax.xz.max.minesynth.structure.ViaTap(2, EAST)));
+		check(down.inputs().equals(List.of(new StructurePin(new Cell(0, 3, 0), SOUTH)))
+			&& down.outputs().size() == 2, "downward junction via pins");
+		check(signalConnects(down, down.inputs().getFirst(), down.outputs().get(0))
+			&& signalConnects(down, down.inputs().getFirst(), down.outputs().get(1)),
+			"downward junction via conducts to every tap");
+
+		int swept = 0;
+		for (Direction in : Direction.values()) {
+			for (Direction t1 : Direction.values()) {
+				for (Direction t2 : Direction.values()) {
+					Structure u = Vias.upwardJunction(in,
+						List.of(new ax.xz.max.minesynth.structure.ViaTap(1, t1),
+							new ax.xz.max.minesynth.structure.ViaTap(3, t2)));
+					Structure d = Vias.downwardJunction(3, in,
+						List.of(new ax.xz.max.minesynth.structure.ViaTap(0, t1),
+							new ax.xz.max.minesynth.structure.ViaTap(2, t2)));
+					for (Structure via : List.of(u, d)) {
+						for (StructurePin output : via.outputs()) {
+							if (!signalConnects(via, via.inputs().getFirst(), output)) {
+								check(false, "junction via sweep " + in + " " + t1 + " " + t2);
+								return;
+							}
+						}
+					}
+					swept += 2;
+				}
+			}
+		}
+		check(swept == 128, "junction via sweep: all face combinations conduct to all taps");
+	}
+
 	private static void schematicChecks() throws Exception {
 		check(BlockColor.WHITE.ordinal() == 0 && BlockColor.LIME.ordinal() == 5
 			&& BlockColor.RED.ordinal() == 14 && BlockColor.BLACK.ordinal() == 15,
@@ -439,9 +547,13 @@ public final class StructureSelfTest {
 	 * and repeaters pass only from their back to their front.
 	 */
 	private static boolean signalConnects(Structure via) {
+		return signalConnects(via, via.inputs().getFirst(), via.outputs().getFirst());
+	}
+
+	private static boolean signalConnects(Structure via, StructurePin from, StructurePin to) {
 		var blocks = via.blocks();
-		BlockPos start = via.inputs().getFirst().connectionBlock();
-		BlockPos goal = via.outputs().getFirst().connectionBlock();
+		BlockPos start = from.connectionBlock();
+		BlockPos goal = to.connectionBlock();
 		var visited = new java.util.HashSet<BlockPos>();
 		var queue = new java.util.ArrayDeque<BlockPos>();
 		visited.add(start);

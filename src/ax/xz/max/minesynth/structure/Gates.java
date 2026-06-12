@@ -18,6 +18,7 @@ public final class Gates {
 	 */
 	public static Structure notGate() {
 		return new Structure.Builder(new Cell(1, 1, 1))
+			.inputSignal(2).outputSignal(14).delayTicks(1)
 			.placeBlock(1, 0, 0, WOOL)
 			.placeBlock(1, 1, 0, REDSTONE_DUST)
 			.placeBlock(1, 1, 1, WOOL)
@@ -39,6 +40,7 @@ public final class Gates {
 	public static Structure andGate() {
 		return new Structure.Builder(new Cell(2, 1, 1))
 			.contained(false)
+			.inputSignal(2).outputSignal(13).delayTicks(2)
 			// input A (west column)
 			.placeBlock(1, 0, 2, WOOL)
 			.placeBlock(1, 1, 2, REDSTONE_DUST)
@@ -72,6 +74,7 @@ public final class Gates {
 	public static Structure orGate() {
 		return new Structure.Builder(new Cell(2, 1, 1))
 			.contained(false)
+			.inputSignal(2).outputSignal(11).delayTicks(1)
 			// input A straight through a repeater to the output port
 			.placeBlock(1, 0, 2, WOOL)
 			.placeBlock(1, 1, 2, REDSTONE_DUST)

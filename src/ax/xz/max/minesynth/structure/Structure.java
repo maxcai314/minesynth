@@ -30,13 +30,33 @@ public record Structure(
 	Map<BlockPos, StructureBlock> blocks,
 	List<StructurePin> inputs,
 	List<StructurePin> outputs,
-	boolean contained
+	boolean contained,
+	SignalStats signal
 ) {
 	public Structure {
 		blocks = Collections.unmodifiableMap(new LinkedHashMap<>(blocks));
 		inputs = List.copyOf(inputs);
 		outputs = List.copyOf(outputs);
 		validate(size, blocks, inputs, outputs, contained);
+	}
+
+	/** Required strength as if a dust were placed on this cell's input pin block; see {@link SignalStats}. */
+	public int inputSignal() {
+		return signal.inputSignal();
+	}
+
+	/**
+	 * Strength as if a dust were placed on the output pin's adjacent cell's
+	 * port block; negative = relative to the input, positive = absolute. See
+	 * {@link SignalStats}.
+	 */
+	public int outputSignal() {
+		return signal.outputSignal();
+	}
+
+	/** Redstone ticks until outputs settle after an input change; see {@link SignalStats}. */
+	public int delayTicks() {
+		return signal.delayTicks();
 	}
 
 	/** The block at {@code position}, empty meaning air. */
@@ -66,7 +86,7 @@ public record Structure(
 
 		List<StructurePin> rotatedInputs = rotatePins(inputs, orientation);
 		List<StructurePin> rotatedOutputs = rotatePins(outputs, orientation);
-		return new Structure(rotatedSize, rotatedBlocks, rotatedInputs, rotatedOutputs, contained);
+		return new Structure(rotatedSize, rotatedBlocks, rotatedInputs, rotatedOutputs, contained, signal);
 	}
 
 	/** This structure with all UNASSIGNED wool and glass recolored to {@code color}. */
@@ -75,7 +95,7 @@ public record Structure(
 			return this;
 		Map<BlockPos, StructureBlock> recolored = new LinkedHashMap<>();
 		blocks.forEach((position, block) -> recolored.put(position, block.withColor(color)));
-		return new Structure(size, recolored, inputs, outputs, contained);
+		return new Structure(size, recolored, inputs, outputs, contained, signal);
 	}
 
 	private List<StructurePin> rotatePins(List<StructurePin> pins, Direction orientation) {
@@ -234,6 +254,7 @@ public record Structure(
 		private final List<StructurePin> outputs = new ArrayList<>();
 		private final Map<Cell, Claim> cellClaims = new HashMap<>();
 		private boolean contained = true;
+		private SignalStats signal = SignalStats.WIRE_LIKE;
 		private int placements = 0;
 
 		public Builder(Cell sizeInCells) {
@@ -306,6 +327,24 @@ public record Structure(
 		 */
 		public Builder contained(boolean contained) {
 			this.contained = contained;
+			return this;
+		}
+
+		/** Required arriving strength at the input pin block; see {@link SignalStats}. */
+		public Builder inputSignal(int inputSignal) {
+			this.signal = new SignalStats(inputSignal, signal.outputSignal(), signal.delayTicks());
+			return this;
+		}
+
+		/** Strength delivered to the adjacent cell's port block; see {@link SignalStats}. */
+		public Builder outputSignal(int outputSignal) {
+			this.signal = new SignalStats(signal.inputSignal(), outputSignal, signal.delayTicks());
+			return this;
+		}
+
+		/** Redstone ticks until outputs settle; see {@link SignalStats}. */
+		public Builder delayTicks(int delayTicks) {
+			this.signal = new SignalStats(signal.inputSignal(), signal.outputSignal(), delayTicks);
 			return this;
 		}
 
@@ -382,7 +421,7 @@ public record Structure(
 
 		/** Builds the immutable structure; all package conventions are validated here. */
 		public Structure build() {
-			return new Structure(size, blocks, inputs, outputs, contained);
+			return new Structure(size, blocks, inputs, outputs, contained, signal);
 		}
 	}
 }
