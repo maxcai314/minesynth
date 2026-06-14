@@ -123,7 +123,7 @@ public final class AdderPnrDemo {
 			.filter(b -> b instanceof StructureBlock.Repeater || b instanceof StructureBlock.RedstoneTorch)
 			.count();
 		return new Structure(routed.size(), routed.blocks(), routed.inputs(), routed.outputs(),
-			routed.contained(), new SignalStats(12, 8, (int) delay));
+			routed.placement(), new SignalStats(12, 8, (int) delay));
 	}
 
 	private static StructurePin south(int x, int z) {

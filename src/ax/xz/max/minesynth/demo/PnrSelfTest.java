@@ -190,6 +190,21 @@ public final class PnrSelfTest {
 			.filter(b -> b instanceof StructureBlock.Repeater).count();
 		check(routedRepeaters >= 1, "strength repair inserted repeaters (gates and h2 vias have none)");
 
+		// a long straight net forces several refreshes; none may be doubled up
+		Floorplan longPlan = new Floorplan.Builder(new Cell(16, 3, 3))
+			.inputPort("IN", new StructurePin(new Cell(0, 0, 1), Direction.WEST))
+			.outputPort("OUT", new StructurePin(new Cell(15, 0, 1), Direction.EAST))
+			.build();
+		PnrDesign longNet = new PnrDesign.Builder(longPlan)
+			.connect("run", new NetEnd.Port("IN"), new NetEnd.Port("OUT"))
+			.build();
+		Structure longBoard = new NaiveRouter().route(new Placement(longNet, Map.of()));
+		long runRepeaters = longBoard.blocks().values().stream()
+			.filter(b -> b instanceof StructureBlock.Repeater).count();
+		check(runRepeaters >= 2, "long run needs multiple refreshes");
+		check(consecutiveRepeaterPairs(longBoard) == 0,
+			"no two repeaters land in adjacent cells (the doubled-repeater bug)");
+
 		// trivial case: directly facing pins route with zero pieces
 		Floorplan empty = new Floorplan.Builder(new Cell(7, 2, 7)).build();
 		PnrDesign facing = new PnrDesign.Builder(empty)
@@ -275,6 +290,21 @@ public final class PnrSelfTest {
 			"fromNetlist lifts the adder netlist (12 components, 17 nets)");
 		expectThrow(() -> PnrDesign.fromNetlist(netlist, plan, Map.of()),
 			"no structure mapped", "fromNetlist rejects unmapped cell kinds");
+	}
+
+	/** Number of face-adjacent cell pairs that both contain a repeater. */
+	private static int consecutiveRepeaterPairs(Structure board) {
+		java.util.Set<Cell> repeaterCells = new java.util.HashSet<>();
+		board.blocks().forEach((pos, block) -> {
+			if (block instanceof StructureBlock.Repeater)
+				repeaterCells.add(pos.cell());
+		});
+		int pairs = 0;
+		for (Cell cell : repeaterCells)
+			for (Cell delta : java.util.List.of(new Cell(1, 0, 0), new Cell(0, 1, 0), new Cell(0, 0, 1)))
+				if (repeaterCells.contains(cell.plus(delta)))
+					pairs++;
+		return pairs;
 	}
 
 	private static void expectRoutingFailure(PnrDesign design, Placement placement, String label) {

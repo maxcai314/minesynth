@@ -18,6 +18,11 @@ public record Cell(int x, int y, int z) {
 		return new Cell(x + direction.dx() * cells, y, z + direction.dz() * cells);
 	}
 
+	/** This cell's column at a different height (same x and z). */
+	public Cell atHeight(int height) {
+		return new Cell(x, height, z);
+	}
+
 	/** The block position of this cell's lowest, northwesternmost corner. */
 	public BlockPos blockOrigin() {
 		return new BlockPos(x * BLOCKS, y * BLOCKS, z * BLOCKS);

@@ -18,10 +18,12 @@
  * <li><b>Support</b>: a structure may not assume anything exists below it.
  *     Dust, repeaters and floor torches must rest on a block inside the same
  *     structure; the builder rejects violations.</li>
- * <li><b>Containment</b>: a contained structure keeps redstone components off
- *     its outer block shell except at port blocks, so it can sit next to
- *     anything. Non-contained structures (vias and most gates) must never be
- *     placed in cells adjacent to another non-contained structure.</li>
+ * <li><b>Placement rule</b> ({@link ax.xz.max.minesynth.structure.PlacementRule}):
+ *     whether a structure keeps its redstone off its side shells and whether it
+ *     tolerates a structure directly above or below. Two adjacent placements
+ *     are legal only if both rules agree, which is how, for example, a wire is
+ *     kept out of the cell directly above a gate whose torch pokes through its
+ *     ceiling.</li>
  * <li><b>Orientation</b>: structures are designed facing NORTH and may be
  *     placed rotated; the orientation names the direction local north ends up
  *     pointing. Repeater facings and torch attachments rotate along.</li>

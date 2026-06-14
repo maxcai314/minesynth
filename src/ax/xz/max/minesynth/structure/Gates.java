@@ -35,11 +35,13 @@ public final class Gates {
 	 * the line powers the wool holding the output torch. Out = A and B.
 	 *
 	 * <p>Pins follow the canonical example: inputs south of both cells,
-	 * output north of cell (0,0,0).
+	 * output north of cell (0,0,0). The inverter torches and the elevated NOR
+	 * line sit on the top shell, so nothing may be placed directly above it.
 	 */
 	public static Structure andGate() {
 		return new Structure.Builder(new Cell(2, 1, 1))
-			.contained(false)
+			.horizontallyContained(false)
+			.allowsAbove(false)
 			.inputSignal(2).outputSignal(13).delayTicks(2)
 			// input A (west column)
 			.placeBlock(1, 0, 2, WOOL)
@@ -73,7 +75,7 @@ public final class Gates {
 	 */
 	public static Structure orGate() {
 		return new Structure.Builder(new Cell(2, 1, 1))
-			.contained(false)
+			.horizontallyContained(false)
 			.inputSignal(2).outputSignal(11).delayTicks(1)
 			// input A straight through a repeater to the output port
 			.placeBlock(1, 0, 2, WOOL)

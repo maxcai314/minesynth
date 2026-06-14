@@ -1,20 +1,17 @@
 package ax.xz.max.minesynth.demo;
 
 import ax.xz.max.minesynth.schematic.SchematicWriter;
-import ax.xz.max.minesynth.structure.BlockColor;
-import ax.xz.max.minesynth.structure.BlockPos;
-import ax.xz.max.minesynth.structure.BuildGuide;
-import ax.xz.max.minesynth.structure.Cell;
-import ax.xz.max.minesynth.structure.Direction;
-import ax.xz.max.minesynth.structure.Gates;
-import ax.xz.max.minesynth.structure.PlacedStructure;
-import ax.xz.max.minesynth.structure.Structure;
-import ax.xz.max.minesynth.structure.StructureBlock;
-import ax.xz.max.minesynth.structure.StructurePin;
-import ax.xz.max.minesynth.structure.Vias;
-import ax.xz.max.minesynth.structure.Wires;
+import ax.xz.max.minesynth.structure.*;
 
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayDeque;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.zip.GZIPInputStream;
 
 import static ax.xz.max.minesynth.structure.Direction.EAST;
 import static ax.xz.max.minesynth.structure.Direction.NORTH;
@@ -41,6 +38,7 @@ public final class StructureSelfTest {
 			recolorChecks();
 			placedStructureChecks();
 			compositionChecks();
+			placementRuleChecks();
 			factoryChecks();
 			signalStatsChecks();
 			junctionChecks();
@@ -69,12 +67,20 @@ public final class StructureSelfTest {
 			"rotatedTo composes ordinal arithmetic");
 		check(NORTH.dz() == -1 && SOUTH.dz() == 1 && EAST.dx() == 1 && WEST.dx() == -1,
 			"direction deltas match Minecraft axes");
+		check(Direction.fromDelta(1, 0) == EAST && Direction.fromDelta(0, -1) == NORTH,
+			"fromDelta maps a unit step back to its direction");
+		check(Direction.between(new Cell(2, 0, 1), new Cell(2, 0, 2)) == SOUTH
+			&& Direction.between(new Cell(2, 0, 1), new Cell(1, 0, 1)) == WEST,
+			"between names the step from one cell to an adjacent one");
+		expectThrow(() -> Direction.between(new Cell(0, 0, 0), new Cell(0, 1, 0)),
+			"not horizontally adjacent", "between rejects a vertical pair");
 	}
 
 	private static void coordinateChecks() {
 		check(new Cell(1, 2, 3).blockOrigin().equals(new BlockPos(3, 6, 9)), "cell to block origin");
 		check(new BlockPos(5, 7, 2).cell().equals(new Cell(1, 2, 0)), "block to cell");
 		check(new Cell(1, 0, 1).plus(NORTH, 2).equals(new Cell(1, 0, -1)), "cell direction offset");
+		check(new Cell(4, 0, 7).atHeight(3).equals(new Cell(4, 3, 7)), "atHeight keeps the column");
 
 		check(new StructurePin(new Cell(0, 0, 0), NORTH).connectionBlock().equals(new BlockPos(1, 1, 0)),
 			"north port block");
@@ -135,9 +141,9 @@ public final class StructureSelfTest {
 
 		expectThrow(() -> new Structure.Builder(new Cell(1, 1, 1))
 				.placeBlock(1, 0, 0, WOOL).placeBlock(1, 1, 0, REDSTONE_DUST).build(),
-			"touches the outer shell", "contained structure with shell dust off-port rejected");
+			"touches a side shell", "contained structure with shell dust off-port rejected");
 		Structure notContained = new Structure.Builder(new Cell(1, 1, 1))
-			.contained(false)
+			.horizontallyContained(false)
 			.placeBlock(1, 0, 0, WOOL).placeBlock(1, 1, 0, REDSTONE_DUST)
 			.build();
 		check(!notContained.contained(), "same design accepted with contained(false)");
@@ -169,7 +175,7 @@ public final class StructureSelfTest {
 			"repeater facing rotates");
 
 		Structure torchFixture = new Structure.Builder(new Cell(1, 1, 1))
-			.contained(false)
+			.horizontallyContained(false)
 			.placeBlock(1, 1, 1, WOOL)
 			.placeBlock(1, 1, 2, StructureBlock.RedstoneTorch.onWall(NORTH))
 			.build();
@@ -230,10 +236,10 @@ public final class StructureSelfTest {
 		expectThrow(() -> new Structure.Builder(new Cell(3, 2, 3))
 				.place(via, new Cell(0, 0, 0), NORTH, BlockColor.UNASSIGNED)
 				.place(via, new Cell(1, 0, 0), NORTH, BlockColor.UNASSIGNED),
-			"intermingle", "two non-contained placements may not touch");
+			"incompatible", "two non-contained placements may not touch");
 		// the assembly itself uses its shell (the vias do), so it cannot claim containment
 		Structure.Builder spaced = new Structure.Builder(new Cell(3, 2, 3))
-			.contained(false)
+			.horizontallyContained(false)
 			.place(via, new Cell(0, 0, 0), NORTH, BlockColor.UNASSIGNED)
 			.place(via, new Cell(2, 0, 0), NORTH, BlockColor.UNASSIGNED)
 			.place(Wires.wire(NORTH, SOUTH), new Cell(1, 0, 0), NORTH, BlockColor.UNASSIGNED);
@@ -499,22 +505,68 @@ public final class StructureSelfTest {
 		check(swept == 128, "junction via sweep: all face combinations conduct to all taps");
 	}
 
-	private static void schematicChecks() throws Exception {
-		check(BlockColor.WHITE.ordinal() == 0 && BlockColor.LIME.ordinal() == 5
-			&& BlockColor.RED.ordinal() == 14 && BlockColor.BLACK.ordinal() == 15,
-			"BlockColor order matches the legacy dye palette");
+	private static void placementRuleChecks() {
+		var contained = PlacementRule.CONTAINED;
+		var exposed = PlacementRule.EXPOSED;
+		var noAbove = exposed.withAllowsAbove(false);
 
-		java.nio.file.Path file = java.nio.file.Path.of("out", "selftest.schematic");
+		check(Gates.andGate().placement().equals(noAbove), "AND gate forbids anything above it");
+		check(Gates.orGate().placement().equals(exposed), "OR gate is exposed but open above");
+		check(Gates.notGate().placement().equals(contained), "NOT gate is fully contained");
+
+		var ABOVE = Adjacency.ABOVE;
+		var NORTH_SIDE = Adjacency.NORTH;
+		check(!noAbove.canNeighbor(contained, ABOVE),
+			"nothing may sit directly above a no-above gate");
+		check(exposed.canNeighbor(contained, ABOVE),
+			"a contained wire may sit above an open-topped gate");
+		check(noAbove.canNeighbor(contained, NORTH_SIDE),
+			"a no-above gate still accepts a contained side neighbor");
+		check(!exposed.canNeighbor(exposed, NORTH_SIDE),
+			"two exposed structures may not be side-adjacent");
+
+		// the live placement path: a wire directly above an AND gate is rejected
+		expectThrow(() -> new Structure.Builder(new Cell(2, 2, 1))
+				.place(Gates.andGate(), new Cell(0, 0, 0), NORTH, BlockColor.UNASSIGNED)
+				.place(Wires.wire(NORTH, SOUTH), new Cell(0, 1, 0), NORTH, BlockColor.UNASSIGNED),
+			"incompatible", "wire directly above an AND gate is rejected");
+		Structure overNot = new Structure.Builder(new Cell(1, 2, 1))
+			.horizontallyContained(false) // a parent re-validates sub-structure port dust against its own shell
+			.place(Gates.notGate(), new Cell(0, 0, 0), NORTH, BlockColor.UNASSIGNED)
+			.place(Wires.wire(NORTH, SOUTH), new Cell(0, 1, 0), NORTH, BlockColor.UNASSIGNED)
+			.build();
+		check(overNot.blocks().size() > Gates.notGate().blocks().size(),
+			"a wire above an open-topped NOT gate is accepted");
+
+		// validation catches a structure that pokes redstone through a shell it claims is clear
+		expectThrow(() -> new Structure.Builder(new Cell(1, 1, 1))
+				.placeBlock(1, 1, 1, StructureBlock.WOOL)
+				.placeBlock(1, 2, 1, StructureBlock.REDSTONE_DUST).build(),
+			"top shell", "dust on the top shell of an allows-above structure is rejected");
+	}
+
+	private static void schematicChecks() throws Exception {
+		Map<BlockColor, Integer> expectedMappings = Map.of(
+				BlockColor.WHITE, 0,
+				BlockColor.LIME, 5,
+				BlockColor.RED, 14,
+				BlockColor.BLACK, 15);
+		for (var entry : expectedMappings.entrySet()) {
+			check(entry.getKey().ordinal() == entry.getValue(),
+					"BlockColor order matches the legacy dye palette");
+		}
+
+		Path file = Path.of("out", "selftest.schematic");
 		SchematicWriter.write(Wires.repeaterWire(SOUTH, NORTH).recolored(BlockColor.LIME), file);
-		byte[] raw = java.nio.file.Files.readAllBytes(file);
+		byte[] raw = Files.readAllBytes(file);
 		check(raw.length > 2 && (raw[0] & 0xFF) == 0x1F && (raw[1] & 0xFF) == 0x8B,
 			"schematic file is gzip compressed");
 
 		byte[] nbt;
-		try (var in = new java.util.zip.GZIPInputStream(new java.io.ByteArrayInputStream(raw))) {
+		try (var in = new GZIPInputStream(new ByteArrayInputStream(raw))) {
 			nbt = in.readAllBytes();
 		}
-		String payload = new String(nbt, java.nio.charset.StandardCharsets.ISO_8859_1);
+		String payload = new String(nbt, StandardCharsets.ISO_8859_1);
 		check(nbt[0] == 0x0A && payload.startsWith("Schematic", 3),
 			"root compound is named Schematic");
 		check(payload.contains("Width") && payload.contains("Height") && payload.contains("Length")
@@ -554,8 +606,8 @@ public final class StructureSelfTest {
 		var blocks = via.blocks();
 		BlockPos start = from.connectionBlock();
 		BlockPos goal = to.connectionBlock();
-		var visited = new java.util.HashSet<BlockPos>();
-		var queue = new java.util.ArrayDeque<BlockPos>();
+		var visited = new HashSet<BlockPos>();
+		var queue = new ArrayDeque<BlockPos>();
 		visited.add(start);
 		queue.add(start);
 		while (!queue.isEmpty()) {

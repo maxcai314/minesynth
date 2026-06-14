@@ -72,7 +72,7 @@ public final class ViaBoardDemo {
 		PlacedStructure downC = new PlacedStructure(Vias.downward(layerC + 1, Direction.NORTH, Direction.SOUTH),
 			new Cell(2, 0, 2), Direction.NORTH, BlockColor.ORANGE);
 
-		Structure.Builder builder = new Structure.Builder(new Cell(3, Math.max(layerB, layerC) + 1, 3)).contained(false);
+		Structure.Builder builder = new Structure.Builder(new Cell(3, Math.max(layerB, layerC) + 1, 3)).horizontallyContained(false);
 		lineA.forEach(builder::place);
 		builder.place(upB).place(westB).place(midB).place(eastB).place(downB)
 			.place(upC).place(westC).place(midC).place(eastC).place(downC)

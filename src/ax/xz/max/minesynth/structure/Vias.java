@@ -228,7 +228,7 @@ public final class Vias {
 		}
 
 		SignalStats stats = computeStats(path, waypoints, signalUpward);
-		builder.contained(false)
+		builder.horizontallyContained(false)
 			.inputSignal(stats.inputSignal())
 			.outputSignal(stats.outputSignal())
 			.delayTicks(stats.delayTicks())
@@ -321,12 +321,7 @@ public final class Vias {
 	private static Direction travelDirection(int index) {
 		int[] from = RING.get(Math.floorMod(index - 1, RING.size()));
 		int[] to = RING.get(Math.floorMod(index, RING.size()));
-		int dx = to[0] - from[0];
-		int dz = to[1] - from[1];
-		for (Direction direction : Direction.values())
-			if (direction.dx() == dx && direction.dz() == dz)
-				return direction;
-		throw new IllegalStateException("ring positions are not adjacent");
+		return Direction.fromDelta(to[0] - from[0], to[1] - from[1]);
 	}
 
 	/** Face-center ring positions (indexes 0, 2, 4, 6) have straight-through travel. */

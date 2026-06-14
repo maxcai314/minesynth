@@ -1,8 +1,10 @@
 package ax.xz.max.minesynth.pnr;
 
+import ax.xz.max.minesynth.structure.Adjacency;
 import ax.xz.max.minesynth.structure.BlockColor;
 import ax.xz.max.minesynth.structure.Cell;
 import ax.xz.max.minesynth.structure.Direction;
+import ax.xz.max.minesynth.structure.PlacementRule;
 import ax.xz.max.minesynth.structure.SignalStats;
 import ax.xz.max.minesynth.structure.Structure;
 import ax.xz.max.minesynth.structure.StructurePin;
@@ -75,7 +77,7 @@ public final class NaiveRouter implements Router {
 		}
 	}
 
-	private record Claim(boolean contained) {}
+	private record Claim(PlacementRule rule) {}
 
 	private record PendingPiece(Structure structure, Cell at, BlockColor color) {}
 
@@ -114,7 +116,7 @@ public final class NaiveRouter implements Router {
 		}
 
 		Cell topCell() {
-			return new Cell(groundCell.x(), layer, groundCell.z());
+			return groundCell.atHeight(layer);
 		}
 
 		void buildStructure() {
@@ -154,7 +156,7 @@ public final class NaiveRouter implements Router {
 		Structure run() throws RoutingException {
 			placement.placements().forEach((name, placed) -> {
 				for (Cell cell : placed.occupiedCells())
-					claims.put(cell, new Claim(placed.structure().contained()));
+					claims.put(cell, new Claim(placed.structure().placement()));
 			});
 
 			int colorIndex = 0;
@@ -224,28 +226,28 @@ public final class NaiveRouter implements Router {
 				// lay the new layer wire cells and fix the via faces
 				List<WireCell> newCells = new ArrayList<>();
 				for (int i = 1; i < path.size() - 1; i++) {
-					Direction in = directionBetween(path.get(i), path.get(i - 1));
+					Direction in = Direction.between(path.get(i), path.get(i - 1));
 					WireCell cell = new WireCell(path.get(i), in);
 					if (i + 1 < path.size())
-						cell.outs.add(directionBetween(path.get(i), path.get(i + 1)));
+						cell.outs.add(Direction.between(path.get(i), path.get(i + 1)));
 					claimWire(path.get(i));
 					txWires.put(path.get(i), cell);
 					newCells.add(cell);
 				}
-				sinkVia.topFace = directionBetween(sinkVia.topCell(), path.get(path.size() - 2));
+				sinkVia.topFace = Direction.between(sinkVia.topCell(), path.get(path.size() - 2));
 
 				sinkVia.buildStructure();
 				List<ChainSegment> chain = new ArrayList<>();
 				int entering;
 				if (!sourceChainWalked) {
-					sourceVia.topFace = directionBetween(sourceVia.topCell(), path.get(1));
+					sourceVia.topFace = Direction.between(sourceVia.topCell(), path.get(1));
 					sourceVia.buildStructure();
 					chain.add(new ChainSegment(sourcePigtail, sourceVia));
 					entering = sourceStrength;
 					sourceChainWalked = true;
 				} else {
 					WireCell seed = txWires.get(path.getFirst());
-					seed.outs.add(directionBetween(seed.cell, path.get(1)));
+					seed.outs.add(Direction.between(seed.cell, path.get(1)));
 					entering = seed.output();
 				}
 				chain.add(new ChainSegment(newCells, sinkVia));
@@ -259,11 +261,10 @@ public final class NaiveRouter implements Router {
 
 		/**
 		 * Walks the chain assigning strengths; on a shortfall, converts the
-		 * latest straight wire cell at or before the failure point into a
-		 * repeater and walks again, until the sink requirement is met or no
-		 * eligible cell remains. Converting at the failure point keeps the
-		 * repeater count minimal, leaving junction cells available as fanout
-		 * branch points.
+		 * latest cell that can actually drive a repeater (arriving >= 1) at or
+		 * before the failure point, and walks again, until the sink requirement
+		 * is met or no eligible cell remains. The fix should land on the last live
+		 * cell upstream (which alone suffices) rather than on the dead cell.
 		 */
 		void walkRepaired(int entering, List<ChainSegment> chain, int required) throws LayerFailure {
 			while (true) {
@@ -300,7 +301,13 @@ public final class NaiveRouter implements Router {
 			return new WalkOutcome(strength, -1);
 		}
 
-		/** Converts the latest non-repeater cell with flat index at most {@code limit}; false if none. */
+		/**
+		 * Converts the latest non-repeater cell with flat index at most
+		 * {@code limit} that has enough input to drive a repeater
+		 * ({@code arriving >= 1}); false if none. Picking the latest such cell
+		 * is both optimal (covers the most wire before it) and the fix for the
+		 * doubled-repeater bug.
+		 */
 		boolean convertLatestBefore(List<ChainSegment> chain, int limit) {
 			WireCell best = null;
 			int index = 0;
@@ -308,7 +315,7 @@ public final class NaiveRouter implements Router {
 				for (WireCell cell : segment.wires()) {
 					if (index > limit)
 						break;
-					if (!cell.repeater)
+					if (!cell.repeater && cell.arriving >= 1)
 						best = cell;
 					index++;
 				}
@@ -339,7 +346,7 @@ public final class NaiveRouter implements Router {
 			Map<Cell, Cell> cameFrom = new HashMap<>();
 			ArrayDeque<Cell> queue = new ArrayDeque<>();
 			Map<Cell, Integer> depth = new HashMap<>();
-			if (!isFree(terminal.cell()))
+			if (!availableForPiece(terminal.cell(), PlacementRule.CONTAINED))
 				throw new LayerFailure("terminal cell " + terminal.cell() + " is occupied");
 			queue.add(terminal.cell());
 			depth.put(terminal.cell(), 0);
@@ -351,7 +358,7 @@ public final class NaiveRouter implements Router {
 					layPigtail(terminal, pinToVia, upward, pigtail);
 					Direction bottomFace = pinToVia.size() == 1
 						? terminal.entryFace()
-						: directionBetween(at, pinToVia.get(pinToVia.size() - 2));
+						: Direction.between(at, pinToVia.get(pinToVia.size() - 2));
 					claimViaColumn(at, layer);
 					ViaColumn via = new ViaColumn(at, layer, bottomFace, upward);
 					txVias.add(via);
@@ -362,7 +369,7 @@ public final class NaiveRouter implements Router {
 					continue;
 				for (Direction direction : Direction.values()) {
 					Cell next = at.plus(direction, 1);
-					if (next.y() == 0 && isFree(next) && !depth.containsKey(next)) {
+					if (next.y() == 0 && availableForPiece(next, PlacementRule.CONTAINED) && !depth.containsKey(next)) {
 						depth.put(next, d + 1);
 						cameFrom.put(next, at);
 						queue.add(next);
@@ -380,8 +387,8 @@ public final class NaiveRouter implements Router {
 				Cell at = wireCells.get(i);
 				Direction pinSide = i == 0
 					? terminal.entryFace()
-					: directionBetween(at, wireCells.get(i - 1));
-				Direction viaSide = directionBetween(at, pinToVia.get(i + 1));
+					: Direction.between(at, wireCells.get(i - 1));
+				Direction viaSide = Direction.between(at, pinToVia.get(i + 1));
 				// signal flows pin->via on the source side and via->pin on the sink side
 				WireCell cell = sourceSide ? new WireCell(at, pinSide) : new WireCell(at, viaSide);
 				cell.outs.add(sourceSide ? viaSide : pinSide);
@@ -394,29 +401,38 @@ public final class NaiveRouter implements Router {
 		}
 
 		boolean viaColumnFits(Cell ground, int layer) {
-			for (int y = 0; y <= layer; y++) {
-				Cell cell = new Cell(ground.x(), y, ground.z());
-				if (!isFree(cell))
+			for (int y = 0; y <= layer; y++)
+				if (!availableForPiece(ground.atHeight(y), PlacementRule.EXPOSED))
 					return false;
-				for (Cell neighbor : neighborsOf(cell)) {
-					Claim claim = claims.get(neighbor);
-					if (claim != null && !claim.contained())
-						return false;
-				}
+			return true;
+		}
+
+		/**
+		 * Whether a piece with rule {@code rule} can occupy {@code cell}: it
+		 * must be free and every claimed face-neighbor must tolerate it (this is
+		 * what keeps a wire out of the cell directly above a no-above gate).
+		 */
+		boolean availableForPiece(Cell cell, PlacementRule rule) {
+			if (!isFree(cell))
+				return false;
+			for (Adjacency side : Adjacency.values()) {
+				Claim other = claims.get(side.neighbor(cell));
+				if (other != null && !rule.canNeighbor(other.rule(), side))
+					return false;
 			}
 			return true;
 		}
 
 		void claimViaColumn(Cell ground, int layer) {
 			for (int y = 0; y <= layer; y++) {
-				Cell cell = new Cell(ground.x(), y, ground.z());
-				claims.put(cell, new Claim(false));
+				Cell cell = ground.atHeight(y);
+				claims.put(cell, new Claim(PlacementRule.EXPOSED));
 				txClaims.add(cell);
 			}
 		}
 
 		void claimWire(Cell cell) {
-			claims.put(cell, new Claim(true));
+			claims.put(cell, new Claim(PlacementRule.CONTAINED));
 			txClaims.add(cell);
 		}
 
@@ -441,7 +457,7 @@ public final class NaiveRouter implements Router {
 					Cell next = at.plus(direction, 1);
 					if (cameFrom.containsKey(next) || next.y() != layer)
 						continue;
-					if (!next.equals(target) && !isFree(next))
+					if (!next.equals(target) && !availableForPiece(next, PlacementRule.CONTAINED))
 						continue;
 					cameFrom.put(next, at);
 					queue.add(next);
@@ -489,7 +505,7 @@ public final class NaiveRouter implements Router {
 
 		Structure assemble() throws RoutingException {
 			Floorplan floorplan = placement.design().floorplan();
-			Structure.Builder board = new Structure.Builder(size).contained(false);
+			Structure.Builder board = new Structure.Builder(size).horizontallyContained(false);
 			try {
 				placement.placements().values().forEach(board::place);
 				for (PendingPiece piece : pieces.values())
@@ -541,18 +557,5 @@ public final class NaiveRouter implements Router {
 			return path;
 		}
 
-		static Direction directionBetween(Cell from, Cell to) {
-			for (Direction direction : Direction.values())
-				if (from.plus(direction, 1).equals(to))
-					return direction;
-			throw new IllegalArgumentException(from + " and " + to + " are not adjacent");
-		}
-
-		static List<Cell> neighborsOf(Cell cell) {
-			return List.of(
-				cell.plus(new Cell(1, 0, 0)), cell.plus(new Cell(-1, 0, 0)),
-				cell.plus(new Cell(0, 1, 0)), cell.plus(new Cell(0, -1, 0)),
-				cell.plus(new Cell(0, 0, 1)), cell.plus(new Cell(0, 0, -1)));
-		}
 	}
 }

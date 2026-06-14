@@ -37,7 +37,8 @@ public final class GateBoardDemo {
 			new Cell(0, 0, 0), Direction.SOUTH, BlockColor.RED);
 
 		Structure board = new Structure.Builder(new Cell(2, 1, 3))
-			.contained(false) // the AND gate uses the top of the board volume
+			.horizontallyContained(false)   // gates use the board's side shells
+			.allowsAbove(false) // the AND gate's torch pokes through the 1-tall ceiling
 			.place(wireB)
 			.place(wireA)
 			.place(andGate)

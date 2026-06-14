@@ -49,27 +49,25 @@ public record Placement(PnrDesign design, Map<String, PlacedStructure> placement
 			}
 		}
 
-		// non-contained placements may never sit in adjacent cells
-		for (var a : placements.entrySet()) {
-			if (a.getValue().structure().contained())
-				continue;
-			for (Cell cell : a.getValue().occupiedCells()) {
-				for (Cell neighbor : neighborsOf(cell)) {
+		// every face-adjacency between two components must satisfy both rules
+		for (var entry : placements.entrySet()) {
+			String name = entry.getKey();
+			ax.xz.max.minesynth.structure.PlacementRule rule = entry.getValue().structure().placement();
+			for (Cell cell : entry.getValue().occupiedCells()) {
+				for (ax.xz.max.minesynth.structure.Adjacency side
+						: ax.xz.max.minesynth.structure.Adjacency.values()) {
+					Cell neighbor = side.neighbor(cell);
 					String other = claims.get(neighbor);
-					if (other != null && !other.equals(a.getKey())
-							&& !placements.get(other).structure().contained())
-						throw new IllegalArgumentException("non-contained components " + a.getKey()
-							+ " and " + other + " sit in adjacent cells " + cell + " / " + neighbor);
+					if (other == null || other.equals(name))
+						continue;
+					var otherRule = placements.get(other).structure().placement();
+					if (!rule.canNeighbor(otherRule, side))
+						throw new IllegalArgumentException("components " + name + " and " + other
+							+ " sit in incompatible adjacent cells " + cell + " / " + neighbor
+							+ " (" + rule + " vs " + otherRule + ")");
 				}
 			}
 		}
-	}
-
-	private static java.util.List<Cell> neighborsOf(Cell cell) {
-		return java.util.List.of(
-			cell.plus(new Cell(1, 0, 0)), cell.plus(new Cell(-1, 0, 0)),
-			cell.plus(new Cell(0, 1, 0)), cell.plus(new Cell(0, -1, 0)),
-			cell.plus(new Cell(0, 0, 1)), cell.plus(new Cell(0, 0, -1)));
 	}
 
 	/** The board-frame pin a net source drives from (output pin or board input port). */

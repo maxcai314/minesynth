@@ -47,7 +47,7 @@ public final class BuildGuide {
 			.append(structure.size().y()).append("x").append(structure.size().z())
 			.append(" cells (").append(extent.x()).append("x").append(extent.y())
 			.append("x").append(extent.z()).append(" blocks), ")
-			.append(structure.contained() ? "contained" : "NOT contained").append('\n');
+			.append(structure.placement()).append('\n');
 
 		for (int y = 0; y < extent.y(); y++) {
 			out.append('\n').append("-- layer y=").append(y);

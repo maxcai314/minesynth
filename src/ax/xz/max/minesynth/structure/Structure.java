@@ -21,23 +21,28 @@ import java.util.Set;
  * Structure that exists is a valid design. Build one fluently with
  * {@link Builder}.
  *
- * <p>{@code contained} means no redstone component touches the outer block
- * shell except at pin connection blocks; see the package documentation for
- * why neighbors care.
+ * <p>{@code placement} (see {@link PlacementRule}) captures how the structure
+ * may sit against its neighbors. The constructor checks that the blocks match
+ * the claimed rule: redstone may only reach a shell the rule says is open.
  */
 public record Structure(
 	Cell size,
 	Map<BlockPos, StructureBlock> blocks,
 	List<StructurePin> inputs,
 	List<StructurePin> outputs,
-	boolean contained,
+	PlacementRule placement,
 	SignalStats signal
 ) {
 	public Structure {
 		blocks = Collections.unmodifiableMap(new LinkedHashMap<>(blocks));
 		inputs = List.copyOf(inputs);
 		outputs = List.copyOf(outputs);
-		validate(size, blocks, inputs, outputs, contained);
+		validate(size, blocks, inputs, outputs, placement);
+	}
+
+	/** Whether this structure keeps its redstone clear of its side shells; see {@link PlacementRule}. */
+	public boolean contained() {
+		return placement.horizontallyContained();
 	}
 
 	/** Required strength as if a dust were placed on this cell's input pin block; see {@link SignalStats}. */
@@ -86,7 +91,7 @@ public record Structure(
 
 		List<StructurePin> rotatedInputs = rotatePins(inputs, orientation);
 		List<StructurePin> rotatedOutputs = rotatePins(outputs, orientation);
-		return new Structure(rotatedSize, rotatedBlocks, rotatedInputs, rotatedOutputs, contained, signal);
+		return new Structure(rotatedSize, rotatedBlocks, rotatedInputs, rotatedOutputs, placement, signal);
 	}
 
 	/** This structure with all UNASSIGNED wool and glass recolored to {@code color}. */
@@ -95,7 +100,7 @@ public record Structure(
 			return this;
 		Map<BlockPos, StructureBlock> recolored = new LinkedHashMap<>();
 		blocks.forEach((position, block) -> recolored.put(position, block.withColor(color)));
-		return new Structure(size, recolored, inputs, outputs, contained, signal);
+		return new Structure(size, recolored, inputs, outputs, placement, signal);
 	}
 
 	private List<StructurePin> rotatePins(List<StructurePin> pins, Direction orientation) {
@@ -135,7 +140,7 @@ public record Structure(
 	// ---- validation ----
 
 	private static void validate(Cell size, Map<BlockPos, StructureBlock> blocks,
-			List<StructurePin> inputs, List<StructurePin> outputs, boolean contained) {
+			List<StructurePin> inputs, List<StructurePin> outputs, PlacementRule placement) {
 		if (size.x() < 1 || size.y() < 1 || size.z() < 1)
 			throw new IllegalArgumentException("structure size must be strictly positive, got " + size);
 		BlockPos extent = size.blockOrigin();
@@ -156,11 +161,19 @@ public record Structure(
 				throw new IllegalArgumentException("block at " + position + " is outside the "
 					+ extent.x() + "x" + extent.y() + "x" + extent.z() + " block volume");
 			validateSupport(position, block, blocks);
-			if (contained && block.isRedstoneComponent()
-					&& onShell(position, extent) && !portBlocks.contains(position))
-				throw new IllegalArgumentException("structure is marked contained, but " + describe(block)
-					+ " at " + position + " touches the outer shell away from any port;"
-					+ " move it inward or mark the structure contained(false)");
+			if (!block.isRedstoneComponent() || portBlocks.contains(position))
+				return;
+			// redstone may only reach a shell the placement rule says is open
+			if (placement.horizontallyContained() && onSideShell(position, extent))
+				throw new IllegalArgumentException("structure is horizontally contained, but " + describe(block)
+					+ " at " + position + " touches a side shell away from any port;"
+					+ " move it inward or call horizontallyContained(false)");
+			if (placement.allowsAbove() && position.y() == extent.y() - 1)
+				throw new IllegalArgumentException("structure allows neighbors above, but " + describe(block)
+					+ " at " + position + " touches its top shell; call allowsAbove(false)");
+			if (placement.allowsBelow() && position.y() == 0)
+				throw new IllegalArgumentException("structure allows neighbors below, but " + describe(block)
+					+ " at " + position + " touches its bottom shell; call allowsBelow(false)");
 		});
 	}
 
@@ -213,9 +226,8 @@ public record Structure(
 			&& p.z() >= 0 && p.z() < extent.z();
 	}
 
-	private static boolean onShell(BlockPos p, BlockPos extent) {
+	private static boolean onSideShell(BlockPos p, BlockPos extent) {
 		return p.x() == 0 || p.x() == extent.x() - 1
-			|| p.y() == 0 || p.y() == extent.y() - 1
 			|| p.z() == 0 || p.z() == extent.z() - 1;
 	}
 
@@ -232,8 +244,7 @@ public record Structure(
 	@Override
 	public String toString() {
 		return "Structure[size=" + size + ", " + blocks.size() + " blocks, "
-			+ inputs.size() + " in, " + outputs.size() + " out"
-			+ (contained ? ", contained" : "") + "]";
+			+ inputs.size() + " in, " + outputs.size() + " out, " + placement + "]";
 	}
 
 	// ---- builder ----
@@ -245,7 +256,7 @@ public record Structure(
 	 * surface at the call site.
 	 */
 	public static final class Builder {
-		private record Claim(int placement, boolean contained) {}
+		private record Claim(int placement, PlacementRule rule) {}
 
 		private final Cell size;
 		private final BlockPos extent;
@@ -253,7 +264,7 @@ public record Structure(
 		private final List<StructurePin> inputs = new ArrayList<>();
 		private final List<StructurePin> outputs = new ArrayList<>();
 		private final Map<Cell, Claim> cellClaims = new HashMap<>();
-		private boolean contained = true;
+		private PlacementRule placement = PlacementRule.CONTAINED;
 		private SignalStats signal = SignalStats.WIRE_LIKE;
 		private int placements = 0;
 
@@ -320,13 +331,27 @@ public record Structure(
 			return this;
 		}
 
-		/**
-		 * Declares whether the built structure is safely contained (the
-		 * default). Mark false for designs that use their outer shell, like
-		 * via structures; the claim is verified at {@link #build()}.
-		 */
-		public Builder contained(boolean contained) {
-			this.contained = contained;
+		/** Sets the full placement rule; see {@link PlacementRule}. */
+		public Builder placement(PlacementRule placement) {
+			this.placement = placement;
+			return this;
+		}
+
+		/** Whether redstone stays clear of the side shells (safe to sit beside). */
+		public Builder horizontallyContained(boolean value) {
+			this.placement = placement.withHorizontallyContained(value);
+			return this;
+		}
+
+		/** Whether a structure may sit in the cell directly above. */
+		public Builder allowsAbove(boolean value) {
+			this.placement = placement.withAllowsAbove(value);
+			return this;
+		}
+
+		/** Whether a structure may sit in the cell directly below. */
+		public Builder allowsBelow(boolean value) {
+			this.placement = placement.withAllowsBelow(value);
 			return this;
 		}
 
@@ -357,9 +382,10 @@ public record Structure(
 		 * Stamps a placement instruction into this builder: the sub-structure
 		 * is rotated to its orientation, recolored (unless the placement color
 		 * is UNASSIGNED), and copied in at the cell offset. The placement
-		 * claims its full cell volume: placements may not share cells, and a
-		 * non-contained placement may not sit in a cell adjacent (including
-		 * above or below) to another non-contained placement.
+		 * claims its full cell volume: placements may not share cells, and each
+		 * face-adjacency to an existing placement must satisfy both structures'
+		 * {@link PlacementRule}s (so, for example, nothing may be placed
+		 * directly above a gate whose torch pokes through its ceiling).
 		 */
 		public Builder place(PlacedStructure placed) {
 			Structure resolved = placed.structure()
@@ -376,6 +402,7 @@ public record Structure(
 					+ " does not fit in the builder (size " + size + ")");
 
 			int placementId = placements++;
+			PlacementRule rule = resolved.placement();
 			List<Cell> claimed = new ArrayList<>();
 			for (int x = 0; x < resolvedSize.x(); x++)
 				for (int y = 0; y < resolvedSize.y(); y++)
@@ -387,14 +414,14 @@ public record Structure(
 				if (existing != null)
 					throw new IllegalArgumentException("cell " + cell + " is already occupied by placement #"
 						+ existing.placement());
-				if (!resolved.contained()) {
-					for (Cell neighbor : neighborsOf(cell)) {
-						Claim other = cellClaims.get(neighbor);
-						if (other != null && !other.contained() && other.placement() != placementId)
-							throw new IllegalArgumentException("non-contained placement at " + cell
-								+ " would sit next to non-contained placement #" + other.placement()
-								+ " at " + neighbor + "; their redstone would intermingle");
-					}
+				for (Adjacency side : Adjacency.values()) {
+					Cell neighbor = side.neighbor(cell);
+					Claim other = cellClaims.get(neighbor);
+					if (other != null && other.placement() != placementId
+							&& !rule.canNeighbor(other.rule(), side))
+						throw new IllegalArgumentException("placement at " + cell
+							+ " is incompatible with placement #" + other.placement()
+							+ " at " + neighbor + " (" + rule + " vs " + other.rule() + ")");
 				}
 			}
 			// pre-check block collisions so a failed place() leaves the builder untouched
@@ -407,21 +434,14 @@ public record Structure(
 			}
 
 			for (Cell cell : claimed)
-				cellClaims.put(cell, new Claim(placementId, resolved.contained()));
+				cellClaims.put(cell, new Claim(placementId, rule));
 			resolved.blocks().forEach((position, block) -> placeBlock(position.plus(offset), block));
 			return this;
 		}
 
-		private static List<Cell> neighborsOf(Cell cell) {
-			return List.of(
-				cell.plus(new Cell(1, 0, 0)), cell.plus(new Cell(-1, 0, 0)),
-				cell.plus(new Cell(0, 1, 0)), cell.plus(new Cell(0, -1, 0)),
-				cell.plus(new Cell(0, 0, 1)), cell.plus(new Cell(0, 0, -1)));
-		}
-
 		/** Builds the immutable structure; all package conventions are validated here. */
 		public Structure build() {
-			return new Structure(size, blocks, inputs, outputs, contained, signal);
+			return new Structure(size, blocks, inputs, outputs, placement, signal);
 		}
 	}
 }
