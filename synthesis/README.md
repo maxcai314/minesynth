@@ -32,3 +32,10 @@ Tests (run manually, check exit code):
 ./build.sh counters_en tests/rtl/test_techmap_dffe.sv     # enable/no-reset counters
 ./build.sh latches tests/rtl/test_fail_latch.sv           # MUST FAIL (negative test)
 ```
+
+Example build:
+
+```bash
+./build.sh counter_4bit tests/rtl/test_synchronous_counter.sv
+cp build/techmap.rtlil tests/rtlil/test_synchronous_counter.rtlil
+```
