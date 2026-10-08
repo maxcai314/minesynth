@@ -382,6 +382,14 @@ public final class StructureSelfTest {
 			"AND gate pins match the canonical example");
 		check(Gates.notGate().contained(), "NOT gate is contained");
 		check(!Gates.orGate().contained(), "OR gate is not contained");
+		check(Gates.xorGate().contained()
+			&& Gates.xorGate().size().equals(new Cell(2, 1, 2))
+			&& Gates.xorGate().inputs().equals(List.of(
+				new StructurePin(new Cell(0, 0, 1), SOUTH),
+				new StructurePin(new Cell(1, 0, 1), SOUTH)))
+			&& Gates.xorGate().outputs().equals(List.of(
+				new StructurePin(new Cell(0, 0, 0), NORTH))),
+			"XOR gate is contained and has the canonical shape and pins");
 	}
 
 	private static void buildGuideChecks() {
@@ -412,6 +420,9 @@ public final class StructureSelfTest {
 			"AND gate stats (13 out, 2 ticks)");
 		check(Gates.orGate().outputSignal() == 11 && Gates.orGate().delayTicks() == 1,
 			"OR gate stats (11 out, 1 tick)");
+		check(Gates.xorGate().inputSignal() == 2 && Gates.xorGate().outputSignal() == 14
+			&& Gates.xorGate().delayTicks() == 3,
+			"XOR gate stats (2 in, 14 out, 3 ticks)");
 
 		Structure wire = Wires.wire(NORTH, EAST);
 		check(wire.rotatedTo(EAST).signal().equals(wire.signal())

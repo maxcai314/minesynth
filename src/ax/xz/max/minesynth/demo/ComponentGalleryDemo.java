@@ -42,12 +42,13 @@ public final class ComponentGalleryDemo {
 		row2.put("NOT gate", Gates.notGate());
 		row2.put("AND gate", Gates.andGate());
 		row2.put("OR gate", Gates.orGate());
+		row2.put("XOR gate", Gates.xorGate());
 		row2.put("via up h2", Vias.upward(2, SOUTH, NORTH));
 		row2.put("via down h3", Vias.downward(3, SOUTH, NORTH));
 		row2.put("junction via 2 taps", Vias.upwardJunction(NORTH,
 			List.of(new ViaTap(1, EAST), new ViaTap(3, WEST))));
 
-		Structure.Builder builder = new Structure.Builder(new Cell(22, 4, 6)).horizontallyContained(false);
+		Structure.Builder builder = new Structure.Builder(new Cell(25, 4, 6)).horizontallyContained(false);
 		BlockColor[] palette = {BlockColor.LIME, BlockColor.CYAN, BlockColor.ORANGE, BlockColor.MAGENTA,
 			BlockColor.YELLOW, BlockColor.LIGHT_BLUE, BlockColor.PINK};
 		StringBuilder key = new StringBuilder();

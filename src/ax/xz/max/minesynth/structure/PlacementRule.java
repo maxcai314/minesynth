@@ -12,9 +12,13 @@ package ax.xz.max.minesynth.structure;
  *     (off-port). A contained structure keeps to itself sideways, so it is safe
  *     to sit beside anything; two structures that are both exposed may not be
  *     side-adjacent (their redstone would intermingle).</li>
- * <li>{@code allowsAbove}: tolerates a structure in the cell directly above.</li>
- * <li>{@code allowsBelow}: tolerates a structure in the cell directly below.</li>
+ * <li>{@code allowsAbove}: will not interfere with any blocks above it (via strong power).</li>
+ * <li>{@code allowsBelow}: will not interfere with any blocks (or dust) below it.</li>
  * </ul>
+ *
+ * todo: allowsBelow is a redundant field and should maybe be removed (it's always true for now)
+ * todo: ports shouldn't be allowed to place next to non-horizontally contained structures
+ * (this edge case doesn't happen in practice because ports are always intentionally wired to something)
  *
  * <p>The two adjacency predicates are the whole rule; the placement validators
  * ask nothing else.

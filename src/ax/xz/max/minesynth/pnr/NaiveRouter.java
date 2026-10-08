@@ -13,6 +13,7 @@ import ax.xz.max.minesynth.structure.Wires;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -39,7 +40,7 @@ public final class NaiveRouter implements Router {
 	/** Default conservative strength assumed at board input ports. */
 	public static final int BOARD_INPUT_STRENGTH = 14;
 	/** Maximum ground-level cells between a pin and its via column. */
-	public static final int PIGTAIL_LIMIT = 4;
+	public static final int PIGTAIL_LIMIT = 6;
 
 	private static final List<BlockColor> NET_PALETTE = List.of(
 		BlockColor.RED, BlockColor.BLUE, BlockColor.GREEN, BlockColor.BROWN,
@@ -131,7 +132,7 @@ public final class NaiveRouter implements Router {
 	}
 
 	/** Where a chain meets a pin: the first routable cell and the face toward the pin side. */
-	private record Terminal(Cell cell, Direction entryFace) {}
+	private record Terminal(Cell cell, Direction entryFace, NetEnd owner) {}
 
 	private static final class Job {
 		final Placement placement;
@@ -139,6 +140,8 @@ public final class NaiveRouter implements Router {
 		final int inputStrength;
 		final int outputRequirement;
 		final Map<Cell, Claim> claims = new HashMap<>();
+		/** Endpoint cells protected from all unrelated route pieces. */
+		final Map<Cell, NetEnd> terminalReservations = new HashMap<>();
 		final Map<Cell, PendingPiece> pieces = new LinkedHashMap<>();
 
 		// per-attempt transaction state
@@ -158,12 +161,30 @@ public final class NaiveRouter implements Router {
 				for (Cell cell : placed.occupiedCells())
 					claims.put(cell, new Claim(placed.structure().placement()));
 			});
+			reserveTerminals();
 
 			int colorIndex = 0;
 			for (Net net : placement.design().nets())
 				routeNet(net, NET_PALETTE.get(colorIndex++ % NET_PALETTE.size()));
 
 			return assemble();
+		}
+
+		/** Reserves every endpoint cell before any net can claim ground routing space. */
+		void reserveTerminals() throws RoutingException {
+			for (Net net : placement.design().nets()) {
+				reserveTerminal(net.source(), placement.sourceLocation(net.source()));
+				for (NetEnd sink : net.sinks())
+					reserveTerminal(sink, placement.sinkLocation(sink));
+			}
+		}
+
+		void reserveTerminal(NetEnd endpoint, StructurePin pin) throws RoutingException {
+			Terminal terminal = terminal(pin, endpoint instanceof NetEnd.Port, endpoint);
+			NetEnd previous = terminalReservations.putIfAbsent(terminal.cell(), endpoint);
+			if (previous != null && !previous.equals(endpoint))
+				throw new RoutingException("terminal cell " + terminal.cell()
+					+ " is reserved by both " + previous + " and " + endpoint);
 		}
 
 		// ---- per-net routing ----
@@ -205,14 +226,14 @@ public final class NaiveRouter implements Router {
 		void routeOnLayer(Net net, int sourceStrength, int layer) throws LayerFailure {
 			// source side: pigtail at ground level, then the upward via
 			Terminal sourceTerminal = terminal(placement.sourceLocation(net.source()),
-				net.source() instanceof NetEnd.Port);
+				net.source() instanceof NetEnd.Port, net.source());
 			List<WireCell> sourcePigtail = new ArrayList<>();
 			ViaColumn sourceVia = placeTerminalVia(sourceTerminal, layer, true, sourcePigtail);
 
 			boolean sourceChainWalked = false;
 			for (NetEnd sinkEnd : net.sinks()) {
 				Terminal sinkTerminal = terminal(placement.sinkLocation(sinkEnd),
-					sinkEnd instanceof NetEnd.Port);
+					sinkEnd instanceof NetEnd.Port, sinkEnd);
 				List<WireCell> sinkPigtail = new ArrayList<>();
 				ViaColumn sinkVia = placeTerminalVia(sinkTerminal, layer, false, sinkPigtail);
 
@@ -329,10 +350,10 @@ public final class NaiveRouter implements Router {
 		// ---- terminals, pigtails, vias ----
 
 		/** Board ports route from their own cell outward; component pins from the faced cell. */
-		Terminal terminal(StructurePin pin, boolean boardPort) {
+		Terminal terminal(StructurePin pin, boolean boardPort, NetEnd owner) {
 			return boardPort
-				? new Terminal(pin.cell(), pin.face())
-				: new Terminal(pin.cell().plus(pin.face(), 1), pin.face().opposite());
+				? new Terminal(pin.cell(), pin.face(), owner)
+				: new Terminal(pin.cell().plus(pin.face(), 1), pin.face().opposite(), owner);
 		}
 
 		/**
@@ -346,14 +367,14 @@ public final class NaiveRouter implements Router {
 			Map<Cell, Cell> cameFrom = new HashMap<>();
 			ArrayDeque<Cell> queue = new ArrayDeque<>();
 			Map<Cell, Integer> depth = new HashMap<>();
-			if (!availableForPiece(terminal.cell(), PlacementRule.CONTAINED))
+			if (!availableForPiece(terminal.cell(), PlacementRule.CONTAINED, terminal.owner()))
 				throw new LayerFailure("terminal cell " + terminal.cell() + " is occupied");
 			queue.add(terminal.cell());
 			depth.put(terminal.cell(), 0);
 
 			while (!queue.isEmpty()) {
 				Cell at = queue.poll();
-				if (viaColumnFits(at, layer)) {
+				if (viaColumnFits(at, layer, terminal.owner())) {
 					List<Cell> pinToVia = tracePath(cameFrom, terminal.cell(), at);
 					layPigtail(terminal, pinToVia, upward, pigtail);
 					Direction bottomFace = pinToVia.size() == 1
@@ -369,7 +390,8 @@ public final class NaiveRouter implements Router {
 					continue;
 				for (Direction direction : Direction.values()) {
 					Cell next = at.plus(direction, 1);
-					if (next.y() == 0 && availableForPiece(next, PlacementRule.CONTAINED) && !depth.containsKey(next)) {
+					if (next.y() == 0 && availableForPiece(next, PlacementRule.CONTAINED, null)
+							&& !depth.containsKey(next)) {
 						depth.put(next, d + 1);
 						cameFrom.put(next, at);
 						queue.add(next);
@@ -397,12 +419,12 @@ public final class NaiveRouter implements Router {
 				pigtail.add(cell);
 			}
 			if (!sourceSide)
-				java.util.Collections.reverse(pigtail); // walk order: via side first
+				Collections.reverse(pigtail); // walk order: via side first
 		}
 
-		boolean viaColumnFits(Cell ground, int layer) {
+		boolean viaColumnFits(Cell ground, int layer, NetEnd allowedTerminal) {
 			for (int y = 0; y <= layer; y++)
-				if (!availableForPiece(ground.atHeight(y), PlacementRule.EXPOSED))
+				if (!availableForPiece(ground.atHeight(y), PlacementRule.EXPOSED, allowedTerminal))
 					return false;
 			return true;
 		}
@@ -412,8 +434,11 @@ public final class NaiveRouter implements Router {
 		 * must be free and every claimed face-neighbor must tolerate it (this is
 		 * what keeps a wire out of the cell directly above a no-above gate).
 		 */
-		boolean availableForPiece(Cell cell, PlacementRule rule) {
+		boolean availableForPiece(Cell cell, PlacementRule rule, NetEnd allowedTerminal) {
 			if (!isFree(cell))
+				return false;
+			NetEnd reservedBy = terminalReservations.get(cell);
+			if (reservedBy != null && !reservedBy.equals(allowedTerminal))
 				return false;
 			for (Adjacency side : Adjacency.values()) {
 				Claim other = claims.get(side.neighbor(cell));
@@ -457,7 +482,7 @@ public final class NaiveRouter implements Router {
 					Cell next = at.plus(direction, 1);
 					if (cameFrom.containsKey(next) || next.y() != layer)
 						continue;
-					if (!next.equals(target) && !availableForPiece(next, PlacementRule.CONTAINED))
+					if (!next.equals(target) && !availableForPiece(next, PlacementRule.CONTAINED, null))
 						continue;
 					cameFrom.put(next, at);
 					queue.add(next);
@@ -553,7 +578,7 @@ public final class NaiveRouter implements Router {
 				at = cameFrom.get(at);
 			}
 			path.add(start);
-			java.util.Collections.reverse(path);
+			Collections.reverse(path);
 			return path;
 		}
 

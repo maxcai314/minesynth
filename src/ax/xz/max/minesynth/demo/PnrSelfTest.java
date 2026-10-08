@@ -284,7 +284,7 @@ public final class PnrSelfTest {
 		var library = Map.of(
 			ax.xz.max.minesynth.netlist.CellKind.GATE_AND, Gates.andGate(),
 			ax.xz.max.minesynth.netlist.CellKind.GATE_OR, Gates.orGate(),
-			ax.xz.max.minesynth.netlist.CellKind.GATE_XOR, Gates.andGate()); // pin-compatible stand-in
+			ax.xz.max.minesynth.netlist.CellKind.GATE_XOR, Gates.xorGate());
 		PnrDesign design = PnrDesign.fromNetlist(netlist, plan, library);
 		check(design.components().size() == 12 && design.nets().size() == 17,
 			"fromNetlist lifts the adder netlist (12 components, 17 nets)");

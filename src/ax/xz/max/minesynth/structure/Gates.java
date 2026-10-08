@@ -100,4 +100,60 @@ public final class Gates {
 			.output(new StructurePin(new Cell(0, 0, 0), Direction.NORTH))
 			.build();
 	}
+
+	/**
+	 * XOR gate, 2x1x2, contained.
+	 * This design uses 3 layers of torches in different combinations to
+	 * drive the output. No torches are placed on the 3rd layer, so
+	 * structures may be placed directly above it.
+	 *
+	 * <p>Pins follow the canonical example: inputs south of both cells,
+	 * output north of cell (0,0,0).
+	 */
+	public static Structure xorGate() {
+		return new Structure.Builder(new Cell(2, 1, 2))
+				.horizontallyContained(true)
+				.allowsAbove(true)
+				.inputSignal(2).outputSignal(14).delayTicks(3)
+				// input A (west column)
+				.placeBlock(1, 0, 5, WOOL)
+				.placeBlock(1, 1, 5, REDSTONE_DUST)
+				.placeBlock(1, 1, 4, WOOL)
+				.placeBlock(1, 1, 3, StructureBlock.RedstoneTorch.onWall(Direction.SOUTH))
+				.placeBlock(1, 2, 3, WOOL)
+				// input B (east column)
+				.placeBlock(4, 0, 5, WOOL)
+				.placeBlock(4, 1, 5, REDSTONE_DUST)
+				.placeBlock(4, 1, 4, WOOL)
+				.placeBlock(4, 1, 3, StructureBlock.RedstoneTorch.onWall(Direction.SOUTH))
+				.placeBlock(4, 2, 3, WOOL)
+				// elevated AND line circuitry
+				.placeBlock(2, 1, 3, WOOL)
+				.placeBlock(3, 1, 3, WOOL)
+				.placeBlock(2, 2, 3, REDSTONE_DUST)
+				.placeBlock(3, 2, 3, REDSTONE_DUST)
+				.placeBlock(3, 1, 2, StructureBlock.RedstoneTorch.onWall(Direction.SOUTH))
+				// final combiner: NAND against each input
+				.placeBlock(1, 1, 2, WOOL)
+				.placeBlock(1, 2, 2, REDSTONE_DUST)
+				.placeBlock(2, 0, 2, WOOL)
+				.placeBlock(2, 1, 2, REDSTONE_DUST)
+				.placeBlock(2, 2, 2, WOOL)
+				.placeBlock(1, 1, 1, StructureBlock.RedstoneTorch.onWall(Direction.SOUTH))
+				.placeBlock(4, 0, 2, WOOL)
+				.placeBlock(4, 1, 2, REDSTONE_DUST)
+				.placeBlock(4, 1, 1, WOOL)
+				.placeBlock(4, 2, 1, REDSTONE_DUST)
+				.placeBlock(3, 1, 1, WOOL)
+				.placeBlock(3, 2, 1, REDSTONE_DUST)
+				.placeBlock(2, 1, 1, WOOL)
+				.placeBlock(2, 2, 1, REDSTONE_DUST)
+				.placeBlock(2, 1, 0, StructureBlock.RedstoneTorch.onWall(Direction.SOUTH))
+				.placeBlock(1, 0, 0, WOOL)
+				.placeBlock(1, 1, 0, REDSTONE_DUST)
+				.input(new StructurePin(new Cell(0, 0, 1), Direction.SOUTH))
+				.input(new StructurePin(new Cell(1, 0, 1), Direction.SOUTH))
+				.output(new StructurePin(new Cell(0, 0, 0), Direction.NORTH))
+				.build();
+	}
 }

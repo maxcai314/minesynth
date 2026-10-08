@@ -153,7 +153,16 @@ public record Structure(
 			if (!seenPins.add(pin))
 				throw new IllegalArgumentException("duplicate pin " + pin);
 			validatePin(pin, size);
-			portBlocks.add(pin.connectionBlock());
+			// portBlocks.add(pin.connectionBlock());
+			// add entire face of this port to portBlocks
+			for (int i=-1; i<=1; i++) {
+				for (int j=-1; j<=1; j++) {
+					int xAdjacency = i * pin.face().dz();
+					int zAdjacency = i * pin.face().dx();
+					BlockPos step = new BlockPos(xAdjacency, j, zAdjacency);
+					portBlocks.add(pin.connectionBlock().plus(step));
+				}
+			}
 		}
 
 		blocks.forEach((position, block) -> {
@@ -168,9 +177,12 @@ public record Structure(
 				throw new IllegalArgumentException("structure is horizontally contained, but " + describe(block)
 					+ " at " + position + " touches a side shell away from any port;"
 					+ " move it inward or call horizontallyContained(false)");
+			if (!(block instanceof StructureBlock.RedstoneTorch))
+				return;
+			// special checks for redstone torches, who may power things above and below it
 			if (placement.allowsAbove() && position.y() == extent.y() - 1)
 				throw new IllegalArgumentException("structure allows neighbors above, but " + describe(block)
-					+ " at " + position + " touches its top shell; call allowsAbove(false)");
+					+ " at " + position + " powers its top shell; call allowsAbove(false)");
 			if (placement.allowsBelow() && position.y() == 0)
 				throw new IllegalArgumentException("structure allows neighbors below, but " + describe(block)
 					+ " at " + position + " touches its bottom shell; call allowsBelow(false)");
