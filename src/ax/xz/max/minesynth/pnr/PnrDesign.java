@@ -2,7 +2,10 @@ package ax.xz.max.minesynth.pnr;
 
 import ax.xz.max.minesynth.netlist.CellKind;
 import ax.xz.max.minesynth.netlist.Netlist;
+import ax.xz.max.minesynth.netlist.NetlistException;
 import ax.xz.max.minesynth.netlist.Pin;
+import ax.xz.max.minesynth.netlist.PortSpec;
+import ax.xz.max.minesynth.rtlil.Cell;
 import ax.xz.max.minesynth.structure.Structure;
 
 import java.util.ArrayList;
@@ -10,7 +13,9 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -26,65 +31,144 @@ public record PnrDesign(Floorplan floorplan, Map<String, Structure> components, 
 	}
 
 	/**
-	 * Builds a design from a validated {@link ax.xz.max.minesynth.netlist.Netlist}:
-	 * every netlist cell becomes a component using the structure mapped for
-	 * its {@link ax.xz.max.minesynth.netlist.CellKind}, and every netlist net
-	 * becomes a {@link Net}.
+	 * Builds a design from a validated {@link Netlist}: every netlist cell
+	 * becomes a component supplied by {@code cellLibrary}, and every netlist
+	 * net becomes a {@link Net}.
 	 *
-	 * <p>Only single-bit gate kinds are connected by this bridge for now.
-	 * Floorplan port names follow the netlist's top-level ports: the wire name
-	 * without its prefix, with {@code [bit]} appended for multi-bit wires (so
-	 * wire {@code \a} of width 2 needs ports {@code a[0]} and {@code a[1]}).
+	 * <p>Cell ports are matched to structure pins using the canonical order
+	 * defined by {@link CellKind#ports(Cell)}. Inputs and outputs are numbered
+	 * independently; ports retain declaration order and vector ports expand
+	 * from bit 0 upward. Every used constant-driven net gets its own physical
+	 * constant-source component from the same library. Floorplan port names
+	 * follow the netlist's top-level ports: the wire name without its prefix,
+	 * with {@code [bit]} appended for multi-bit wires (so wire {@code \a} of
+	 * width 2 needs ports {@code a[0]} and {@code a[1]}).
 	 */
 	public static PnrDesign fromNetlist(Netlist netlist, Floorplan floorplan,
 	                                    CellLibrary cellLibrary) {
+		Objects.requireNonNull(cellLibrary, "cellLibrary");
 		Builder builder = new Builder(floorplan);
-		Map<String, String> componentNames = new LinkedHashMap<>();
-		Map<String, CellKind> kinds = new LinkedHashMap<>();
+		Map<String, ComponentMapping> componentMappings = new LinkedHashMap<>();
 
 		int index = 0;
-		for (ax.xz.max.minesynth.rtlil.Cell cell : netlist.cells()) {
+		for (Cell cell : netlist.cells()) {
 			CellKind kind = netlist.kindOf(cell);
-			Structure structure = cellLibrary.structureFor(cell, kind);
+			Structure structure = cellLibrary.structureFor(new CellLibrary.NetlistCell(cell, kind));
 			if (structure == null)
 				throw new IllegalArgumentException("no structure mapped for " + kind.rtlilType()
 					+ " (cell " + cell.name() + ")");
-			String name = kind.name().replace("GATE_", "").toLowerCase(java.util.Locale.ROOT) + index++;
-			componentNames.put(cell.name(), name);
-			kinds.put(cell.name(), kind);
+
+			PinLayout pinLayout = pinLayout(cell, kind);
+			requireLibraryPinCounts(cell, kind, structure, pinLayout);
+
+			String name = kind.name().replace("GATE_", "").toLowerCase(Locale.ROOT) + index++;
+			componentMappings.put(cell.name(), new ComponentMapping(name, kind, pinLayout));
 			builder.component(name, structure);
 		}
 
-		for (ax.xz.max.minesynth.netlist.Net net : netlist.nets()) {
+		Map<Integer, String> constantComponents = new LinkedHashMap<>();
+		int constantIndex = 0;
+		for (var net : netlist.nets()) {
+			if (net.sinks().isEmpty() || !(net.driver() instanceof Pin.ConstantPin constant))
+				continue;
+			boolean value = constant.state().toBoolean();
+			String name = "constant" + (value ? "1" : "0") + "_" + constantIndex++;
+			Structure structure = cellLibrary.structureFor(new CellLibrary.Constant(value));
+			if (structure == null)
+				throw new IllegalArgumentException("no structure mapped for constant " + (value ? 1 : 0));
+			requireConstantPinCounts(value, structure);
+			constantComponents.put(net.id(), name);
+			builder.component(name, structure);
+		}
+
+		for (var net : netlist.nets()) {
+			if (net.sinks().isEmpty())
+				continue; // dangling driver, nothing to route
 			String netName = net.name().orElse("n" + net.id());
 			NetEnd source = switch (net.driver()) {
-				case Pin.CellPin(String cell, String port, int bit) -> {
-					requireGateOutput(kinds.get(cell), port, netName);
-					yield new NetEnd.Pin(componentNames.get(cell), 0);
-				}
+				case Pin.CellPin(String cell, String port, int bit) ->
+					componentPin(componentMappings, cell, port, bit, true, netName);
 				case Pin.PortPin(String wire, int bit) ->
 					new NetEnd.Port(portName(netlist, wire, bit));
 				case Pin.ConstantPin c ->
-					throw new IllegalArgumentException("net " + netName
-						+ " is driven by a constant, which is not supported yet");
+					new NetEnd.Pin(constantComponents.get(net.id()), 0);
 			};
-			List<NetEnd> sinks = new java.util.ArrayList<>();
+			List<NetEnd> sinks = new ArrayList<>();
 			for (Pin sink : net.sinks()) {
 				switch (sink) {
 					case Pin.CellPin(String cell, String port, int bit) ->
-						sinks.add(new NetEnd.Pin(componentNames.get(cell),
-							gateInputIndex(kinds.get(cell), port, netName)));
+						sinks.add(componentPin(componentMappings, cell, port, bit, false, netName));
 					case Pin.PortPin(String wire, int bit) ->
 						sinks.add(new NetEnd.Port(portName(netlist, wire, bit)));
 					case Pin.ConstantPin c ->
 						throw new IllegalArgumentException("net " + netName + " sinks into a constant");
 				}
 			}
-			if (sinks.isEmpty())
-				continue; // dangling driver, nothing to route
 			builder.connect(netName, source, sinks.toArray(NetEnd[]::new));
 		}
 		return builder.build();
+	}
+
+	private static PinLayout pinLayout(Cell cell, CellKind kind) {
+		Map<PortBit, Integer> inputs = new LinkedHashMap<>();
+		Map<PortBit, Integer> outputs = new LinkedHashMap<>();
+		int inputIndex = 0;
+		int outputIndex = 0;
+		try {
+			for (var entry : kind.ports(cell).entrySet()) {
+				PortSpec spec = entry.getValue();
+				for (int bit = 0; bit < spec.width(); bit++) {
+					PortBit portBit = new PortBit(entry.getKey(), bit);
+					if (spec.direction() == PortSpec.Direction.INPUT)
+						inputs.put(portBit, inputIndex++);
+					else
+						outputs.put(portBit, outputIndex++);
+				}
+			}
+		} catch (NetlistException e) {
+			throw new IllegalStateException("validated cell " + cell.name()
+				+ " no longer satisfies the " + kind.rtlilType() + " port contract", e);
+		}
+		return new PinLayout(Map.copyOf(inputs), Map.copyOf(outputs));
+	}
+
+	private static void requireLibraryPinCounts(Cell cell, CellKind kind, Structure structure,
+	                                             PinLayout layout) {
+		requireLibraryPinCount(cell, kind, "input", structure.inputs().size(), layout.inputs().size());
+		requireLibraryPinCount(cell, kind, "output", structure.outputs().size(), layout.outputs().size());
+	}
+
+	private static void requireLibraryPinCount(Cell cell, CellKind kind, String direction,
+	                                           int actual, int expected) {
+		if (actual != expected)
+			throw new IllegalArgumentException("cell " + cell.name() + " (" + kind.rtlilType()
+				+ "): library structure has " + actual + " " + direction
+				+ " pins, but the port contract requires " + expected);
+	}
+
+	private static void requireConstantPinCounts(boolean value, Structure structure) {
+		if (!structure.inputs().isEmpty() || structure.outputs().size() != 1)
+			throw new IllegalArgumentException("constant " + (value ? 1 : 0)
+				+ " library structure must have no inputs and exactly one output, but has "
+				+ structure.inputs().size() + " inputs and " + structure.outputs().size() + " outputs");
+	}
+
+	private static NetEnd.Pin componentPin(Map<String, ComponentMapping> componentMappings,
+	                                       String cellName, String port, int bit,
+	                                       boolean output, String netName) {
+		ComponentMapping component = componentMappings.get(cellName);
+		if (component == null)
+			throw new IllegalArgumentException("net " + netName + " references unknown cell " + cellName);
+
+		Map<PortBit, Integer> indices = output
+			? component.pinLayout().outputs()
+			: component.pinLayout().inputs();
+		Integer index = indices.get(new PortBit(port, bit));
+		if (index == null)
+			throw new IllegalArgumentException("net " + netName + " references unknown "
+				+ (output ? "output" : "input") + " pin " + port + "[" + bit + "] of a "
+				+ component.kind().rtlilType());
+		return new NetEnd.Pin(component.name(), index);
 	}
 
 	private static String portName(Netlist netlist, String wireName, int bit) {
@@ -94,30 +178,11 @@ public record PnrDesign(Floorplan floorplan, Map<String, Structure> components, 
 		return wire.width() > 1 ? base + "[" + bit + "]" : base;
 	}
 
-	private static void requireGateOutput(CellKind kind, String port, String netName) {
-		if (gateInputOrder(kind, netName) == null || !port.equals("\\Y"))
-			throw new IllegalArgumentException("net " + netName + " is driven by unsupported pin "
-				+ port + " of a " + kind.rtlilType());
-	}
+	private record PortBit(String port, int bit) {}
 
-	private static int gateInputIndex(CellKind kind, String port, String netName) {
-		List<String> order = gateInputOrder(kind, netName);
-		int index = order.indexOf(port);
-		if (index < 0)
-			throw new IllegalArgumentException("net " + netName + " sinks into unknown port "
-				+ port + " of a " + kind.rtlilType());
-		return index;
-	}
+	private record PinLayout(Map<PortBit, Integer> inputs, Map<PortBit, Integer> outputs) {}
 
-	private static List<String> gateInputOrder(CellKind kind, String netName) {
-		return switch (kind) {
-			case GATE_NOT -> List.of("\\A");
-			case GATE_AND, GATE_OR, GATE_XOR -> List.of("\\A", "\\B");
-			case GATE_MUX -> List.of("\\A", "\\B", "\\S");
-			default -> throw new IllegalArgumentException("net " + netName + " touches a "
-				+ kind.rtlilType() + " cell, which fromNetlist cannot map yet");
-		};
-	}
+	private record ComponentMapping(String name, CellKind kind, PinLayout pinLayout) {}
 
 	private static void validate(Floorplan floorplan, Map<String, Structure> components, List<Net> nets) {
 		Set<NetEnd> drivenSinks = new HashSet<>();

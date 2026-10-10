@@ -1,5 +1,7 @@
 package ax.xz.max.minesynth.demo;
 
+import ax.xz.max.minesynth.netlist.Netlist;
+import ax.xz.max.minesynth.pnr.CellLibrary;
 import ax.xz.max.minesynth.pnr.Floorplan;
 import ax.xz.max.minesynth.pnr.NaivePlacer;
 import ax.xz.max.minesynth.pnr.NaiveRouter;
@@ -8,7 +10,9 @@ import ax.xz.max.minesynth.pnr.Placement;
 import ax.xz.max.minesynth.pnr.PlacementException;
 import ax.xz.max.minesynth.pnr.PnrDesign;
 import ax.xz.max.minesynth.pnr.RoutingException;
+import ax.xz.max.minesynth.rtlil.RtlilParser;
 import ax.xz.max.minesynth.structure.BlockColor;
+import ax.xz.max.minesynth.structure.BlockPos;
 import ax.xz.max.minesynth.structure.Cell;
 import ax.xz.max.minesynth.structure.Direction;
 import ax.xz.max.minesynth.structure.Gates;
@@ -18,7 +22,11 @@ import ax.xz.max.minesynth.structure.StructureBlock;
 import ax.xz.max.minesynth.structure.StructurePin;
 import ax.xz.max.minesynth.structure.Wires;
 
+import java.nio.file.Path;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static ax.xz.max.minesynth.structure.Direction.NORTH;
 import static ax.xz.max.minesynth.structure.Direction.SOUTH;
@@ -269,8 +277,8 @@ public final class PnrSelfTest {
 	}
 
 	private static void fromNetlistChecks() throws Exception {
-		var netlist = ax.xz.max.minesynth.netlist.Netlist.of(ax.xz.max.minesynth.rtlil.RtlilParser
-			.parseFile(java.nio.file.Path.of("synthesis/tests/rtlil/test_two_bit_adder.rtlil")));
+		var netlist = Netlist.of(RtlilParser
+			.parseFile(Path.of("synthesis/tests/rtlil/test_two_bit_adder.rtlil")));
 		Floorplan plan = new Floorplan.Builder(new Cell(30, 2, 30))
 			.inputPort("a[0]", new StructurePin(new Cell(2, 0, 29), SOUTH))
 			.inputPort("a[1]", new StructurePin(new Cell(4, 0, 29), SOUTH))
@@ -281,27 +289,128 @@ public final class PnrSelfTest {
 			.outputPort("sum[1]", new StructurePin(new Cell(4, 0, 0), NORTH))
 			.outputPort("cout", new StructurePin(new Cell(6, 0, 0), NORTH))
 			.build();
-		var library = Map.of(
-			ax.xz.max.minesynth.netlist.CellKind.GATE_AND, Gates.andGate(),
-			ax.xz.max.minesynth.netlist.CellKind.GATE_OR, Gates.orGate(),
-			ax.xz.max.minesynth.netlist.CellKind.GATE_XOR, Gates.xorGate());
-		PnrDesign design = PnrDesign.fromNetlist(netlist, plan, /*library*/ null);
+		PnrDesign design = PnrDesign.fromNetlist(netlist, plan, CellLibrary.standardLibrary());
 		check(design.components().size() == 12 && design.nets().size() == 17,
 			"fromNetlist lifts the adder netlist (12 components, 17 nets)");
-		expectThrow(() -> PnrDesign.fromNetlist(netlist, plan, /*Map.of()*/ null),
+		expectThrow(() -> PnrDesign.fromNetlist(netlist, plan, request -> null),
 			"no structure mapped", "fromNetlist rejects unmapped cell kinds");
+
+		var dffNetlist = Netlist.of(RtlilParser.parse("""
+			attribute \\top 1
+			module \\dff_bridge_test
+			  wire input 1 \\clk
+			  wire width 4 input 2 \\d
+			  wire width 4 output 3 \\q
+			  cell \\MC_DFF31 \\ff
+			    parameter signed \\WIDTH 4
+			    connect \\CLK \\clk
+			    connect \\D \\d
+			    connect \\Q \\q
+			  end
+			end
+			""", "dff_bridge_test.rtlil"));
+		Floorplan dffPlan = new Floorplan.Builder(new Cell(20, 3, 20))
+			.inputPort("clk", new StructurePin(new Cell(2, 0, 19), SOUTH))
+			.inputPort("d[0]", new StructurePin(new Cell(4, 0, 19), SOUTH))
+			.inputPort("d[1]", new StructurePin(new Cell(6, 0, 19), SOUTH))
+			.inputPort("d[2]", new StructurePin(new Cell(8, 0, 19), SOUTH))
+			.inputPort("d[3]", new StructurePin(new Cell(10, 0, 19), SOUTH))
+			.outputPort("q[0]", new StructurePin(new Cell(4, 0, 0), NORTH))
+			.outputPort("q[1]", new StructurePin(new Cell(6, 0, 0), NORTH))
+			.outputPort("q[2]", new StructurePin(new Cell(8, 0, 0), NORTH))
+			.outputPort("q[3]", new StructurePin(new Cell(10, 0, 0), NORTH))
+			.build();
+		PnrDesign dffDesign = PnrDesign.fromNetlist(
+			dffNetlist, dffPlan, CellLibrary.standardLibrary());
+		check(dffDesign.nets().stream().anyMatch(net ->
+				net.source().equals(new NetEnd.Port("clk"))
+					&& net.sinks().contains(new NetEnd.Pin("mc_dff310", 0)))
+			&& dffDesign.nets().stream().anyMatch(net ->
+				net.source().equals(new NetEnd.Port("d[3]"))
+					&& net.sinks().contains(new NetEnd.Pin("mc_dff310", 4)))
+			&& dffDesign.nets().stream().anyMatch(net ->
+				net.source().equals(new NetEnd.Pin("mc_dff310", 3))
+					&& net.sinks().contains(new NetEnd.Port("q[3]"))),
+			"fromNetlist maps vector DFF pins in canonical CLK, D, Q order");
+		expectThrow(() -> PnrDesign.fromNetlist(dffNetlist, dffPlan,
+				request -> Gates.notGate()),
+			"port contract requires 5", "fromNetlist rejects wrong library pin counts");
+
+		Structure lowConstant = Gates.constant(false);
+		Structure highConstant = Gates.constant(true);
+		check(lowConstant.blocks().size() == 1
+				&& lowConstant.blockAt(new BlockPos(1, 1, 1)).orElse(null) instanceof StructureBlock.Wool
+				&& highConstant.blocks().size() == 2
+				&& highConstant.blockAt(new BlockPos(1, 1, 0)).orElse(null)
+					instanceof StructureBlock.RedstoneTorch torch
+				&& torch.wallAttachment().orElse(null) == SOUTH,
+			"constant structures retain center wool and high adds a north-face torch");
+
+		var constantNetlist = Netlist.of(RtlilParser.parse("""
+			attribute \\top 1
+			module \\constant_bridge_test
+			  wire output 1 \\low
+			  wire output 2 \\high
+			  connect \\low 1'0
+			  connect \\high 1'1
+			end
+			""", "constant_bridge_test.rtlil"));
+		Floorplan constantPlan = new Floorplan.Builder(new Cell(10, 3, 10))
+			.outputPort("low", new StructurePin(new Cell(2, 0, 0), NORTH))
+			.outputPort("high", new StructurePin(new Cell(4, 0, 0), NORTH))
+			.build();
+		CellLibrary standardLibrary = CellLibrary.standardLibrary();
+		int[] constantRequests = {0};
+		CellLibrary trackingLibrary = request -> {
+			if (request instanceof CellLibrary.Constant)
+				constantRequests[0]++;
+			return standardLibrary.structureFor(request);
+		};
+		PnrDesign constantDesign = PnrDesign.fromNetlist(
+			constantNetlist, constantPlan, trackingLibrary);
+		long constantTorches = constantDesign.components().values().stream()
+			.flatMap(structure -> structure.blocks().values().stream())
+			.filter(block -> block instanceof StructureBlock.RedstoneTorch)
+			.count();
+		check(constantDesign.components().size() == 2 && constantDesign.nets().size() == 2
+				&& constantDesign.components().values().stream().allMatch(structure ->
+					structure.inputs().isEmpty() && structure.outputs().size() == 1
+						&& structure.blockAt(new BlockPos(1, 1, 1))
+							.orElse(null) instanceof StructureBlock.Wool)
+				&& constantTorches == 1 && constantRequests[0] == 2,
+			"fromNetlist materializes low and high constant sources");
+
+		// Regression: count[3]'s second fanout branch reaches its sink via
+		// directly from a weak branch seed. The router must detour to make a
+		// wire cell available for strength repair instead of exhausting.
+		var counterNetlist = Netlist.of(RtlilParser.parseFile(
+			Path.of("synthesis/tests/rtlil/test_synchronous_counter.rtlil")));
+		Floorplan counterPlan = new Floorplan.Builder(new Cell(32, 10, 48))
+			.inputPort("clk", new StructurePin(new Cell(8, 0, 47), SOUTH))
+			.inputPort("rst_n", new StructurePin(new Cell(16, 0, 47), SOUTH))
+			.outputPort("count[0]", new StructurePin(new Cell(8, 0, 0), NORTH))
+			.outputPort("count[1]", new StructurePin(new Cell(12, 0, 0), NORTH))
+			.outputPort("count[2]", new StructurePin(new Cell(16, 0, 0), NORTH))
+			.outputPort("count[3]", new StructurePin(new Cell(20, 0, 0), NORTH))
+			.build();
+		PnrDesign counterDesign = PnrDesign.fromNetlist(
+			counterNetlist, counterPlan, CellLibrary.standardLibrary());
+		Structure counterBoard = new NaiveRouter().route(
+			new NaivePlacer(8).place(counterDesign));
+		check(counterBoard.outputs().size() == 4,
+			"strength repair detours when an adjacent sink via has no repeater site");
 	}
 
 	/** Number of face-adjacent cell pairs that both contain a repeater. */
 	private static int consecutiveRepeaterPairs(Structure board) {
-		java.util.Set<Cell> repeaterCells = new java.util.HashSet<>();
+		Set<Cell> repeaterCells = new HashSet<>();
 		board.blocks().forEach((pos, block) -> {
 			if (block instanceof StructureBlock.Repeater)
 				repeaterCells.add(pos.cell());
 		});
 		int pairs = 0;
 		for (Cell cell : repeaterCells)
-			for (Cell delta : java.util.List.of(new Cell(1, 0, 0), new Cell(0, 1, 0), new Cell(0, 0, 1)))
+			for (Cell delta : List.of(new Cell(1, 0, 0), new Cell(0, 1, 0), new Cell(0, 0, 1)))
 				if (repeaterCells.contains(cell.plus(delta)))
 					pairs++;
 		return pairs;

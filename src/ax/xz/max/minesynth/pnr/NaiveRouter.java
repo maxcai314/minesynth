@@ -19,6 +19,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Baseline router using the layer-per-net strategy: apart from a trivial
@@ -27,7 +28,9 @@ import java.util.Map;
  * runs across one 2D routing layer (tried iteratively from y=1 upward), and
  * descends through downward vias to its sinks. If a net cannot be realized on
  * one layer it is torn off and retried one layer higher; when no layer works
- * the router throws.
+ * the router throws. A strength failure with no available repeater site first
+ * retries the same layer with a short detour forced between an existing branch
+ * seed and an adjacent sink via.
  *
  * <p>Wire cells are {@link Wires#simpleJunction} pieces (gaining branch faces
  * where fanout attaches) and become {@link Wires#repeaterSimpleJunction}
@@ -71,10 +74,17 @@ public final class NaiveRouter implements Router {
 		return new Job(placement, boardInputStrength, boardOutputRequirement).run();
 	}
 
-	/** Signals that the current layer attempt cannot work; the net retries higher. */
-	private static final class LayerFailure extends Exception {
+	/** Signals that the current layer attempt cannot work. */
+	private static class LayerFailure extends Exception {
 		LayerFailure(String reason) {
 			super(reason, null, false, false);
+		}
+	}
+
+	/** A strength failure that may be fixed by forcing space for a repeater. */
+	private static final class NoRepeaterSiteFailure extends LayerFailure {
+		NoRepeaterSiteFailure(String reason) {
+			super(reason);
 		}
 	}
 
@@ -207,13 +217,21 @@ public final class NaiveRouter implements Router {
 
 			String lastFailure = "no routing layers available";
 			for (int layer = 1; layer < size.y(); layer++) {
-				txClaims.clear();
-				txWires.clear();
-				txVias.clear();
 				try {
-					routeOnLayer(net, sourceStrength, layer);
+					routeOnLayer(net, sourceStrength, layer, false);
 					commit(color);
 					return;
+				} catch (NoRepeaterSiteFailure failure) {
+					rollback();
+					try {
+						routeOnLayer(net, sourceStrength, layer, true);
+						commit(color);
+						return;
+					} catch (LayerFailure retryFailure) {
+						lastFailure = "layer " + layer + ": " + failure.getMessage()
+							+ "; repeater-site detour failed: " + retryFailure.getMessage();
+						rollback();
+					}
 				} catch (LayerFailure failure) {
 					lastFailure = "layer " + layer + ": " + failure.getMessage();
 					rollback();
@@ -223,7 +241,8 @@ public final class NaiveRouter implements Router {
 				+ size + "; " + lastFailure);
 		}
 
-		void routeOnLayer(Net net, int sourceStrength, int layer) throws LayerFailure {
+		void routeOnLayer(Net net, int sourceStrength, int layer, boolean forceRepeaterSites)
+				throws LayerFailure {
 			// source side: pigtail at ground level, then the upward via
 			Terminal sourceTerminal = terminal(placement.sourceLocation(net.source()),
 				net.source() instanceof NetEnd.Port, net.source());
@@ -240,7 +259,7 @@ public final class NaiveRouter implements Router {
 				List<Cell> starts = sourceChainWalked ? branchSeeds(layer) : List.of(sourceVia.topCell());
 				if (starts.isEmpty())
 					throw new LayerFailure("no branch seeds left for fanout to " + sinkEnd);
-				List<Cell> path = bfsOnLayer(starts, sinkVia.topCell(), layer);
+				List<Cell> path = bfsOnLayer(starts, sinkVia.topCell(), layer, forceRepeaterSites);
 				if (path == null)
 					throw new LayerFailure("no path to sink " + sinkEnd);
 
@@ -294,13 +313,25 @@ public final class NaiveRouter implements Router {
 					return;
 				int limit = outcome.failedAt() < 0 ? Integer.MAX_VALUE : outcome.failedAt();
 				if (!convertLatestBefore(chain, limit))
-					throw new LayerFailure("strength repair exhausted (delivered " + outcome.delivered()
-						+ ", required " + required + ")");
+					throw new NoRepeaterSiteFailure(outcome.failureMessage(required)
+						+ "; no existing wire cell can be converted to a repeater");
 			}
 		}
 
-		/** Delivered strength on success (failedAt -1), or the failing wire-cell index. */
-		private record WalkOutcome(int delivered, int failedAt) {}
+		/** Strength at completion, or at the primitive that rejected it. */
+		private record WalkOutcome(int delivered, int failedAt, String failedPrimitive,
+		                           int requiredAtFailure) {
+			static WalkOutcome success(int delivered) {
+				return new WalkOutcome(delivered, -1, null, 0);
+			}
+
+			String failureMessage(int sinkRequirement) {
+				if (failedAt < 0)
+					return "sink requires strength " + sinkRequirement + " but received " + delivered;
+				return failedPrimitive + " requires strength " + requiredAtFailure
+					+ " but received " + delivered;
+			}
+		}
 
 		WalkOutcome tryWalk(int entering, List<ChainSegment> chain) {
 			int strength = entering;
@@ -308,18 +339,24 @@ public final class NaiveRouter implements Router {
 			for (ChainSegment segment : chain) {
 				for (WireCell cell : segment.wires()) {
 					cell.arriving = strength;
-					if (strength < (cell.repeater ? 1 : 3))
-						return new WalkOutcome(strength, index);
+					int required = cell.repeater ? 1 : 3;
+					if (strength < required)
+						return new WalkOutcome(strength, index,
+							(cell.repeater ? "repeater" : "wire") + " cell " + cell.cell, required);
 					index++;
 					strength = cell.output();
 				}
 				if (segment.via() != null) {
-					if (strength < segment.via().structure.inputSignal())
-						return new WalkOutcome(strength, index);
+					ViaColumn via = segment.via();
+					int required = via.structure.inputSignal();
+					if (strength < required)
+						return new WalkOutcome(strength, index,
+							(via.upward ? "upward" : "downward") + " via at " + via.groundCell
+								+ " to layer " + via.layer, required);
 					strength = segment.via().resolveOutput(strength);
 				}
 			}
-			return new WalkOutcome(strength, -1);
+			return WalkOutcome.success(strength);
 		}
 
 		/**
@@ -463,9 +500,11 @@ public final class NaiveRouter implements Router {
 
 		// ---- layer pathfinding ----
 
-		List<Cell> bfsOnLayer(List<Cell> starts, Cell target, int layer) {
+		List<Cell> bfsOnLayer(List<Cell> starts, Cell target, int layer,
+		                      boolean forceRepeaterSites) {
 			Map<Cell, Cell> cameFrom = new HashMap<>();
 			ArrayDeque<Cell> queue = new ArrayDeque<>();
+			Set<Cell> startSet = Set.copyOf(starts);
 			for (Cell start : starts) {
 				cameFrom.put(start, start);
 				queue.add(start);
@@ -480,6 +519,11 @@ public final class NaiveRouter implements Router {
 				}
 				for (Direction direction : Direction.values()) {
 					Cell next = at.plus(direction, 1);
+					// A direct branch-seed-to-via hop has no wire cell where
+					// strength repair can put a repeater. On the repair retry,
+					// force BFS to take a detour that creates such a site.
+					if (forceRepeaterSites && startSet.contains(at) && next.equals(target))
+						continue;
 					if (cameFrom.containsKey(next) || next.y() != layer)
 						continue;
 					if (!next.equals(target) && !availableForPiece(next, PlacementRule.CONTAINED, null))

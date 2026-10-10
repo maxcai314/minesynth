@@ -20,34 +20,36 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
- * The synthesized two-bit adder through the whole stack: the RTLIL netlist
- * from the synthesis flow is parsed, lifted into a {@link PnrDesign} via
- * {@link PnrDesign#fromNetlist}, machine-placed and machine-routed, and
- * exported as a schematic. The hand-built XOR structure is used directly as
- * a reusable component in the synthesized design.
+ * The synthesized four-bit synchronous counter through the complete physical
+ * pipeline: parse RTLIL, instantiate standard cells, place, route, and export
+ * the resulting Minecraft structure.
  *
- * <p>Expected behavior in game: cout:sum = a + b + cin.
+ * <p>The reset is active-low and synchronous. While {@code rst_n} is high,
+ * {@code count} increments on each rising edge of {@code clk}; while
+ * {@code rst_n} is low, the next rising edge clears {@code count} to zero.
+ *
+ * <p>Usage: {@code SynchronousCounterPnrDemo [file.rtlil]}. The default is
+ * {@code synthesis/tests/rtlil/test_synchronous_counter.rtlil}.
  */
-public final class AdderPnrDemo {
+public final class SynchronousCounterPnrDemo {
 	public static void main(String[] args) throws Exception {
-		String file = args.length > 0 ? args[0] : "synthesis/tests/rtlil/test_two_bit_adder.rtlil";
+		String file = args.length > 0 ? args[0]
+			: "synthesis/tests/rtlil/test_synchronous_counter.rtlil";
 		Netlist netlist = Netlist.of(RtlilParser.parseFile(Path.of(file)));
 		System.out.println("netlist " + netlist.topName() + ": " + netlist.cells().size()
 			+ " cells, " + netlist.nets().size() + " nets");
 
-		System.out.println("using XOR gate: " + Gates.xorGate().size() + " cells");
+		System.out.println("using 4-bit DFF: " + Gates.dff(4).size() + " cells");
 		System.out.println();
 
-		Cell dimensions = new Cell(32, 8, 24);
+		Cell dimensions = new Cell(24, 10, 26);
 		Floorplan floorplan = new Floorplan.Builder(dimensions)
-			.inputPort("a[0]", south(4, dimensions.z() - 1))
-			.inputPort("a[1]", south(9, dimensions.z() - 1))
-			.inputPort("b[0]", south(14, dimensions.z() - 1))
-			.inputPort("b[1]", south(19, dimensions.z() - 1))
-			.inputPort("cin", south(24, dimensions.z() - 1))
-			.outputPort("sum[0]", north(4))
-			.outputPort("sum[1]", north(9))
-			.outputPort("cout", north(14))
+			.inputPort("clk", south(8, dimensions.z() - 1))
+			.inputPort("rst_n", south(16, dimensions.z() - 1))
+			.outputPort("count[0]", north(8))
+			.outputPort("count[1]", north(12))
+			.outputPort("count[2]", north(16))
+			.outputPort("count[3]", north(20))
 			.build();
 
 		PnrDesign design = PnrDesign.fromNetlist(netlist, floorplan, CellLibrary.standardLibrary());
@@ -73,15 +75,17 @@ public final class AdderPnrDemo {
 		floorplan.outputPorts().forEach((name, pin) ->
 			System.out.println("  output " + name + ": dust at block " + block(pin)));
 		System.out.println();
-		System.out.println("expected: cout:sum = a + b + cin");
+		System.out.println("expected: count increments on rising clk edges; low rst_n clears on the next edge");
 
-		Path schematicFile = Path.of("out", "pnr-adder.schematic");
+		Path schematicFile = Path.of("out", "pnr-synchronous-counter.schematic");
 		SchematicWriter.write(board, schematicFile);
-		Path guideFile = Path.of("out", "pnr-adder-guide.txt");
+		Path guideFile = Path.of("out", "pnr-synchronous-counter-guide.txt");
 		Files.writeString(guideFile, BuildGuide.compassDiagram() + "\n" + BuildGuide.render(board));
 		System.out.println();
-		System.out.println("wrote " + schematicFile + " (worldedit: //schem load pnr-adder, then //paste)");
-		System.out.println("wrote " + guideFile + " (full layer-by-layer tutorial, too big for the console)");
+		System.out.println("wrote " + schematicFile
+			+ " (worldedit: //schem load pnr-synchronous-counter, then //paste)");
+		System.out.println("wrote " + guideFile
+			+ " (full layer-by-layer tutorial, too big for the console)");
 	}
 
 	private static StructurePin south(int x, int z) {

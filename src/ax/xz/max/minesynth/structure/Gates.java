@@ -34,6 +34,7 @@ public final class Gates {
 		Structure.Builder builder = new Structure.Builder(new Cell(width + 2, 2, 1))
 				.inputSignal(2)
 				.outputSignal(14)
+				.delayTicks(10 * width / 4) // conservative estimate
 				.horizontallyContained(true);
 
 		// input CLK from the west (cell x=0), with pulse generator to drive memory cells
@@ -86,6 +87,29 @@ public final class Gates {
 			}
 		}
 
+		return builder.build();
+	}
+
+	/**
+	 * A one-cell constant source with no inputs and one north-facing output.
+	 * Both values retain a glass block at the center for a visible physical
+	 * marker. A true source adds a wall torch on the wool's north face; a false
+	 * source leaves that output position as air.
+	 */
+	public static Structure constant(boolean value) {
+		StructureBlock block = new Glass(value ? BlockColor.WHITE : BlockColor.BLACK);
+		Structure.Builder builder = new Structure.Builder(new Cell(1, 1, 1))
+				.horizontallyContained(true)
+				.inputSignal(1).outputSignal(14).delayTicks(0)
+				.output(new StructurePin(new Cell(0, 0, 0), Direction.NORTH));
+		builder.placeBlock(1, 1, 1, block); // center block
+		for (int i = 0; i < 3; i++) {
+			for (int j = 0; j < 3; j++) {
+				builder.placeBlock(i, 0, j, block); // platform
+			}
+		}
+		if (value)
+			builder.placeBlock(1, 1, 0, RedstoneTorch.onWall(Direction.SOUTH));
 		return builder.build();
 	}
 
@@ -231,6 +255,75 @@ public final class Gates {
 				.input(new StructurePin(new Cell(0, 0, 1), Direction.SOUTH))
 				.input(new StructurePin(new Cell(1, 0, 1), Direction.SOUTH))
 				.output(new StructurePin(new Cell(0, 0, 0), Direction.NORTH))
+				.build();
+	}
+
+	/**
+	 * Skeleton for a single-bit 2-to-1 multiplexer. A and B are data inputs,
+	 * S is the select input, and Y is the selected output:
+	 * {@code Y = S ? B : A}. Thus S low passes A through to Y, while S high
+	 * passes B through to Y. An equivalent Boolean expression is
+	 * {@code Y = (A AND NOT S) OR (B AND S)}.
+	 *
+	 * <p>Input pin ordering follows the cell-library contract: A is input 0,
+	 * B is input 1, and S is input 2. Y is output 0. The 2x2x2-cell skeleton
+	 * puts A and B on the south faces of cells (0,0,1) and (1,0,1), S on the
+	 * west face of cell (0,0,0), and Y on the north face of cell (0,0,0).
+	 */
+	public static Structure muxGate() {
+		return new Structure.Builder(new Cell(2, 2, 2))
+				.horizontallyContained(true)
+				.allowsAbove(true)
+				.inputSignal(7).outputSignal(13).delayTicks(3)
+				.input(new StructurePin(new Cell(0, 0, 1), Direction.SOUTH)) // A
+				.input(new StructurePin(new Cell(1, 0, 1), Direction.SOUTH)) // B
+				.input(new StructurePin(new Cell(0, 0, 0), Direction.WEST)) // S
+				.output(new StructurePin(new Cell(1, 0, 0), Direction.NORTH)) // Y
+				// input A
+				.placeBlock(1, 0, 5, WOOL)
+				.placeBlock(1, 1, 5, REDSTONE_DUST)
+				.placeBlock(1, 1, 4, WOOL)
+				.placeBlock(1, 1, 3, RedstoneTorch.onWall(Direction.SOUTH))
+				// input B
+				.placeBlock(4, 0, 5, WOOL)
+				.placeBlock(4, 1, 5, REDSTONE_DUST)
+				.placeBlock(4, 1, 4, WOOL)
+				.placeBlock(4, 1, 3, RedstoneTorch.onWall(Direction.SOUTH))
+				// multiplexor selector A
+				.placeBlock(0, 0, 1, WOOL)
+				.placeBlock(0, 1, 1, REDSTONE_DUST)
+				.placeBlock(1, 1, 1, WOOL)
+				.placeBlock(1, 2, 1, REDSTONE_DUST)
+				.placeBlock(2, 0, 1, WOOL)
+				.placeBlock(2, 1, 1, REDSTONE_DUST)
+				.placeBlock(2, 0, 2, WOOL)
+				.placeBlock(2, 1, 2, new Repeater(Direction.SOUTH, 1))
+				.placeBlock(2, 0, 3, WOOL)
+				.placeBlock(2, 1, 3, REDSTONE_DUST)
+				.placeBlock(2, 1, 4, WOOL)
+				.placeBlock(2, 2, 4, REDSTONE_DUST)
+				.placeBlock(3, 1, 4, WOOL)
+				.placeBlock(3, 2, 4, REDSTONE_DUST)
+				.placeBlock(3, 1, 3, WOOL)
+				.placeBlock(3, 2, 3, new Repeater(Direction.NORTH, 1))
+				.placeBlock(3, 2, 2, WOOL)
+				.placeBlock(3, 2, 1, RedstoneTorch.onWall(Direction.SOUTH))
+				// multiplexor selector B
+				.placeBlock(1, 2, 2, WOOL)
+				.placeBlock(1, 3, 2, REDSTONE_DUST)
+				.placeBlock(2, 2, 2, WOOL)
+				.placeBlock(2, 3, 2, REDSTONE_DUST)
+				.placeBlock(2, 3, 3, WOOL)
+				.placeBlock(2, 4, 3, REDSTONE_DUST)
+				.placeBlock(3, 3, 3, RedstoneTorch.onWall(Direction.WEST))
+				.placeBlock(4, 2, 3, WOOL)
+				.placeBlock(4, 3, 3, REDSTONE_DUST)
+				.placeBlock(4, 2, 2, RedstoneTorch.onWall(Direction.SOUTH))
+				// output wire
+				.placeBlock(4, 1, 1, WOOL)
+				.placeBlock(4, 2, 1, REDSTONE_DUST)
+				.placeBlock(4, 0, 0, WOOL)
+				.placeBlock(4, 1, 0, REDSTONE_DUST)
 				.build();
 	}
 }
