@@ -80,6 +80,14 @@ public enum CellKind {
 	 * parameters. Also validates the parameters themselves (width bounds,
 	 * reset value width).
 	 *
+	 * <p>The returned map's iteration order is the canonical structure-pin
+	 * order. Inputs and outputs are flattened separately in declaration order,
+	 * with each multi-bit port expanded from bit 0 upward. A physical cell
+	 * implementation may place those pins anywhere on its boundary, but its
+	 * {@link ax.xz.max.minesynth.structure.Structure#inputs()} and
+	 * {@link ax.xz.max.minesynth.structure.Structure#outputs()} lists must use
+	 * this order.
+	 *
 	 * @throws NetlistException if a parameter is missing, out of range, or
 	 *         inconsistent
 	 */

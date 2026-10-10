@@ -58,7 +58,7 @@ public final class AdderPnrDemo {
 			.outputPort("cout", north(14))
 			.build();
 
-		PnrDesign design = PnrDesign.fromNetlist(netlist, floorplan, gateLibrary);
+		PnrDesign design = PnrDesign.fromNetlist(netlist, floorplan, /*gateLibrary*/ null);
 		System.out.println("design: " + design.components().size() + " components, "
 			+ design.nets().size() + " nets");
 		System.out.println("floorplan size: " + floorplan.size());

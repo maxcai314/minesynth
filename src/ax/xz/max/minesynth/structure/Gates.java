@@ -1,16 +1,93 @@
 package ax.xz.max.minesynth.structure;
 
-import static ax.xz.max.minesynth.structure.StructureBlock.REDSTONE_DUST;
-import static ax.xz.max.minesynth.structure.StructureBlock.WOOL;
+import static ax.xz.max.minesynth.structure.StructureBlock.*;
 
 /**
- * Reference logic gate structures. These are demo-grade designs for proving
- * out the modeling layer; treat them as drafts until verified in game (see
- * {@link BuildGuide}). The real synthesis cell library (MC_* cells) comes in a
- * later phase and will live elsewhere.
+ * Reference logic and sequential cell structures used by the standard cell
+ * library. These are demo-grade designs for proving out the modeling layer;
+ * treat them as drafts until verified in game (see {@link BuildGuide}).
  */
 public final class Gates {
 	private Gates() {}
+
+	/**
+	 * Positive-edge-triggered D flip-flop bank with {@code width} independent
+	 * data bits and one shared clock. On each low-to-high transition of CLK, it
+	 * samples every D bit simultaneously and stores those values on the matching
+	 * Q outputs. Q does not change otherwise. This cell has no
+	 * reset input; the simulator assumes it powers up at zero.
+	 *
+	 * <p>The structure is {@code width + 2 x 1 x 3} cells.
+	 * D inputs enter from the south, Q outputs leave from the north,
+	 * and CLK enters from the west side of the center row.
+	 *
+	 * <p>Pin ordering follows the cell-library contract. Inputs are CLK first,
+	 * then D[0] through D[width - 1]. Outputs are Q[0] through Q[width - 1].
+	 * Physical pin locations are implementation-defined,
+	 * but this list ordering must remain stable.
+	 */
+	public static Structure dff(int width) {
+		if (width < 1 || width > 31)
+			throw new IllegalArgumentException("DFF width must be between 1 and 31, got " + width);
+
+		// our implementation uses width + 2 cells in the X direction, and 2 cells of height.
+		Structure.Builder builder = new Structure.Builder(new Cell(width + 2, 2, 1))
+				.inputSignal(2)
+				.outputSignal(14)
+				.horizontallyContained(true);
+
+		// input CLK from the west (cell x=0), with pulse generator to drive memory cells
+		builder.input(new StructurePin(new Cell(0, 0, 0), Direction.WEST))
+				.placeBlock(0, 0, 1, WOOL)
+				.placeBlock(0, 1, 1, REDSTONE_DUST)
+				.placeBlock(1, 1, 1, WOOL)
+				.placeBlock(1, 2, 1, RedstoneTorch.onFloor())
+				.placeBlock(1, 3, 1, WOOL)
+				.placeBlock(2, 0, 1, WOOL)
+				.placeBlock(2, 1, 1, new Repeater(Direction.EAST, 4)) // delay for pulse gen
+				.placeBlock(2, 2, 1, WOOL)
+				.placeBlock(2, 3, 1, REDSTONE_DUST)
+				.placeBlock(3, 1, 1, WOOL)
+				.placeBlock(3, 2, 1, REDSTONE_DUST);
+
+		// now, generate each memory cell, with input D from south and output Q to north.
+		for (int i = 0; i < width; i++) {
+			int originX = 3 * i + 4;
+			Cell originCell = new Cell(i + 1, 0, 0);
+
+			// build the memory cell, wiring the input to the output, south to north
+			builder.input(new StructurePin(originCell, Direction.SOUTH))
+					.placeBlock(originX, 0, 2, WOOL)
+					.placeBlock(originX, 1, 2, REDSTONE_DUST)
+					.placeBlock(originX, 0, 1, WOOL)
+					.placeBlock(originX, 1, 1, new Repeater(Direction.NORTH, 1))
+					.placeBlock(originX, 0, 0, WOOL)
+					.placeBlock(originX, 1, 0, REDSTONE_DUST)
+					.output(new StructurePin(originCell, Direction.NORTH));
+
+			// build the driver for the cell, locking the repeater
+			builder.placeBlock(originX + 1, 0, 1, WOOL)
+					.placeBlock(originX + 1, 1, 1, new Repeater(Direction.WEST, 1))
+					.placeBlock(originX + 2, 1, 1, WOOL)
+					.placeBlock(originX + 2, 2, 1, REDSTONE_DUST);
+
+			// connect the clock to the driver, with a repeater every 4 units.
+			if ((i + 1) % 4 == 0) {
+				builder.placeBlock(originX, 2, 1, WOOL)
+						.placeBlock(originX, 3, 1, REDSTONE_DUST)
+						.placeBlock(originX + 1, 2, 1, WOOL)
+						.placeBlock(originX + 1, 3, 1, new Repeater(Direction.EAST, 1))
+						.placeBlock(originX + 2, 3, 1, WOOL);
+			} else {
+				builder.placeBlock(originX, 2, 1, WOOL)
+						.placeBlock(originX, 3, 1, REDSTONE_DUST)
+						.placeBlock(originX + 1, 2, 1, WOOL)
+						.placeBlock(originX + 1, 3, 1, REDSTONE_DUST);
+			}
+		}
+
+		return builder.build();
+	}
 
 	/**
 	 * Inverter, 1x1x1, contained: input dust powers the center wool, which

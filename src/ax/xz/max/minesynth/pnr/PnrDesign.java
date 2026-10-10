@@ -1,5 +1,8 @@
 package ax.xz.max.minesynth.pnr;
 
+import ax.xz.max.minesynth.netlist.CellKind;
+import ax.xz.max.minesynth.netlist.Netlist;
+import ax.xz.max.minesynth.netlist.Pin;
 import ax.xz.max.minesynth.structure.Structure;
 
 import java.util.ArrayList;
@@ -28,23 +31,21 @@ public record PnrDesign(Floorplan floorplan, Map<String, Structure> components, 
 	 * its {@link ax.xz.max.minesynth.netlist.CellKind}, and every netlist net
 	 * becomes a {@link Net}.
 	 *
-	 * <p>Only single-bit gate kinds are supported for now; mapped structures
-	 * must declare their input pins in the gate's port order (A, B, then S)
-	 * and exactly one output. Floorplan port names must follow the netlist's
-	 * top-level ports: the wire name without its prefix, with {@code [bit]}
-	 * appended for multi-bit wires (so wire {@code \a} of width 2 needs ports
-	 * {@code a[0]} and {@code a[1]}).
+	 * <p>Only single-bit gate kinds are connected by this bridge for now.
+	 * Floorplan port names follow the netlist's top-level ports: the wire name
+	 * without its prefix, with {@code [bit]} appended for multi-bit wires (so
+	 * wire {@code \a} of width 2 needs ports {@code a[0]} and {@code a[1]}).
 	 */
-	public static PnrDesign fromNetlist(ax.xz.max.minesynth.netlist.Netlist netlist, Floorplan floorplan,
-			Map<ax.xz.max.minesynth.netlist.CellKind, Structure> gateLibrary) {
+	public static PnrDesign fromNetlist(Netlist netlist, Floorplan floorplan,
+	                                    CellLibrary cellLibrary) {
 		Builder builder = new Builder(floorplan);
 		Map<String, String> componentNames = new LinkedHashMap<>();
-		Map<String, ax.xz.max.minesynth.netlist.CellKind> kinds = new LinkedHashMap<>();
+		Map<String, CellKind> kinds = new LinkedHashMap<>();
 
 		int index = 0;
 		for (ax.xz.max.minesynth.rtlil.Cell cell : netlist.cells()) {
-			ax.xz.max.minesynth.netlist.CellKind kind = netlist.kindOf(cell);
-			Structure structure = gateLibrary.get(kind);
+			CellKind kind = netlist.kindOf(cell);
+			Structure structure = cellLibrary.structureFor(cell, kind);
 			if (structure == null)
 				throw new IllegalArgumentException("no structure mapped for " + kind.rtlilType()
 					+ " (cell " + cell.name() + ")");
@@ -57,25 +58,25 @@ public record PnrDesign(Floorplan floorplan, Map<String, Structure> components, 
 		for (ax.xz.max.minesynth.netlist.Net net : netlist.nets()) {
 			String netName = net.name().orElse("n" + net.id());
 			NetEnd source = switch (net.driver()) {
-				case ax.xz.max.minesynth.netlist.Pin.CellPin(String cell, String port, int bit) -> {
+				case Pin.CellPin(String cell, String port, int bit) -> {
 					requireGateOutput(kinds.get(cell), port, netName);
 					yield new NetEnd.Pin(componentNames.get(cell), 0);
 				}
-				case ax.xz.max.minesynth.netlist.Pin.PortPin(String wire, int bit) ->
+				case Pin.PortPin(String wire, int bit) ->
 					new NetEnd.Port(portName(netlist, wire, bit));
-				case ax.xz.max.minesynth.netlist.Pin.ConstantPin c ->
+				case Pin.ConstantPin c ->
 					throw new IllegalArgumentException("net " + netName
 						+ " is driven by a constant, which is not supported yet");
 			};
 			List<NetEnd> sinks = new java.util.ArrayList<>();
-			for (ax.xz.max.minesynth.netlist.Pin sink : net.sinks()) {
+			for (Pin sink : net.sinks()) {
 				switch (sink) {
-					case ax.xz.max.minesynth.netlist.Pin.CellPin(String cell, String port, int bit) ->
+					case Pin.CellPin(String cell, String port, int bit) ->
 						sinks.add(new NetEnd.Pin(componentNames.get(cell),
 							gateInputIndex(kinds.get(cell), port, netName)));
-					case ax.xz.max.minesynth.netlist.Pin.PortPin(String wire, int bit) ->
+					case Pin.PortPin(String wire, int bit) ->
 						sinks.add(new NetEnd.Port(portName(netlist, wire, bit)));
-					case ax.xz.max.minesynth.netlist.Pin.ConstantPin c ->
+					case Pin.ConstantPin c ->
 						throw new IllegalArgumentException("net " + netName + " sinks into a constant");
 				}
 			}
@@ -86,20 +87,20 @@ public record PnrDesign(Floorplan floorplan, Map<String, Structure> components, 
 		return builder.build();
 	}
 
-	private static String portName(ax.xz.max.minesynth.netlist.Netlist netlist, String wireName, int bit) {
+	private static String portName(Netlist netlist, String wireName, int bit) {
 		var wire = netlist.port(wireName).orElseThrow(() ->
 			new IllegalArgumentException("netlist references unknown port wire " + wireName));
 		String base = wireName.substring(1);
 		return wire.width() > 1 ? base + "[" + bit + "]" : base;
 	}
 
-	private static void requireGateOutput(ax.xz.max.minesynth.netlist.CellKind kind, String port, String netName) {
+	private static void requireGateOutput(CellKind kind, String port, String netName) {
 		if (gateInputOrder(kind, netName) == null || !port.equals("\\Y"))
 			throw new IllegalArgumentException("net " + netName + " is driven by unsupported pin "
 				+ port + " of a " + kind.rtlilType());
 	}
 
-	private static int gateInputIndex(ax.xz.max.minesynth.netlist.CellKind kind, String port, String netName) {
+	private static int gateInputIndex(CellKind kind, String port, String netName) {
 		List<String> order = gateInputOrder(kind, netName);
 		int index = order.indexOf(port);
 		if (index < 0)
@@ -108,7 +109,7 @@ public record PnrDesign(Floorplan floorplan, Map<String, Structure> components, 
 		return index;
 	}
 
-	private static List<String> gateInputOrder(ax.xz.max.minesynth.netlist.CellKind kind, String netName) {
+	private static List<String> gateInputOrder(CellKind kind, String netName) {
 		return switch (kind) {
 			case GATE_NOT -> List.of("\\A");
 			case GATE_AND, GATE_OR, GATE_XOR -> List.of("\\A", "\\B");

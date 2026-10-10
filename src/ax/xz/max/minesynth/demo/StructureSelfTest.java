@@ -390,6 +390,18 @@ public final class StructureSelfTest {
 			&& Gates.xorGate().outputs().equals(List.of(
 				new StructurePin(new Cell(0, 0, 0), NORTH))),
 			"XOR gate is contained and has the canonical shape and pins");
+
+		Structure dff = Gates.dff(3);
+		boolean dffPinsMatch = dff.inputs().size() == 4 && dff.outputs().size() == 3
+			&& dff.inputs().getFirst().face() == WEST;
+		if (dffPinsMatch)
+			for (int bit = 0; bit < 3; bit++)
+				dffPinsMatch &= dff.inputs().get(bit + 1).face() == SOUTH
+					&& dff.outputs().get(bit).face() == NORTH
+					&& dff.inputs().get(bit + 1).cell().x() == dff.outputs().get(bit).cell().x();
+		check(dffPinsMatch, "DFF pins are CLK, D bits, then Q bits in canonical order");
+		expectThrow(() -> Gates.dff(0), "between 1 and 31", "DFF rejects width zero");
+		expectThrow(() -> Gates.dff(32), "between 1 and 31", "DFF rejects width above 31");
 	}
 
 	private static void buildGuideChecks() {

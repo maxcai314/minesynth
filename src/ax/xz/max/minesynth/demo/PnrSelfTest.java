@@ -285,10 +285,10 @@ public final class PnrSelfTest {
 			ax.xz.max.minesynth.netlist.CellKind.GATE_AND, Gates.andGate(),
 			ax.xz.max.minesynth.netlist.CellKind.GATE_OR, Gates.orGate(),
 			ax.xz.max.minesynth.netlist.CellKind.GATE_XOR, Gates.xorGate());
-		PnrDesign design = PnrDesign.fromNetlist(netlist, plan, library);
+		PnrDesign design = PnrDesign.fromNetlist(netlist, plan, /*library*/ null);
 		check(design.components().size() == 12 && design.nets().size() == 17,
 			"fromNetlist lifts the adder netlist (12 components, 17 nets)");
-		expectThrow(() -> PnrDesign.fromNetlist(netlist, plan, Map.of()),
+		expectThrow(() -> PnrDesign.fromNetlist(netlist, plan, /*Map.of()*/ null),
 			"no structure mapped", "fromNetlist rejects unmapped cell kinds");
 	}
 
